@@ -30,6 +30,18 @@
  *       "sizes": ["1024x1024", ...],
  *       "extraBody": { }
  *     },
+ *     "seedream": {                                  // C6 火山 Seedream（方舟）
+ *       "baseUrl": "https://ark.cn-beijing.volces.com/api/v3",
+ *       "model": "doubao-seedream-4-5-251128",
+ *       "apiKeyEnv": "POND_SEEDREAM_API_KEY",
+ *       "supportsSeed": true, "watermark": false,
+ *       "cost": { "unit": "perImage", "value": 0 }
+ *     },
+ *     "doubao": {                                    // C6 豆包 Seedream（同协议，模型线不同）
+ *       "model": "doubao-seedream-3-0-t2i",
+ *       "apiKeyEnv": "POND_DOUBAO_API_KEY",
+ *       "guidanceScale": 2.5
+ *     },
  *     "defaults": { "size": null, "aspect": null, "style": null, "negative": null }
  *   }
  *
@@ -46,12 +58,14 @@ import { resolvePondHome } from '../shared/paths.mjs';
 import { ImageConfigError } from './errors.mjs';
 import { STYLES, parseSize } from './prompt.mjs';
 import { PLACEHOLDER_KEYS } from './workflow.mjs';
+import { SEEDREAM_SIZES } from './seedream.mjs';
+import { DOUBAO_IMAGE_SIZES } from './doubao.mjs';
 
 /** 配置文件名（位于 POND_HOME 下）。 */
 export const IMAGE_CONFIG_FILE = 'image.json';
 
-/** 默认降级链（规格 §5：本地算力优先）。 */
-export const DEFAULT_CHAIN = Object.freeze(['comfyui', 'openai-compat']);
+/** 默认降级链（规格 §5：本地算力优先，云兜底；sd-command 未实现不列）。 */
+export const DEFAULT_CHAIN = Object.freeze(['comfyui', 'openai-compat', 'seedream', 'doubao']);
 
 /** ComfyUI 默认地址：本机 5060 上的服务。 */
 export const DEFAULT_COMFY_BASE_URL = 'http://127.0.0.1:8188';
@@ -60,8 +74,16 @@ export const DEFAULT_COMFY_BASE_URL = 'http://127.0.0.1:8188';
 export const DEFAULT_OPENAI_BASE_URL = 'https://api.openai.com/v1';
 export const DEFAULT_OPENAI_MODEL = 'gpt-image-1';
 
+/** C6 云 adapter（seedream / doubao）默认端点与模型线（方舟 images/generations）。 */
+export const DEFAULT_SEEDREAM_BASE_URL = 'https://ark.cn-beijing.volces.com/api/v3';
+export const DEFAULT_SEEDREAM_MODEL = 'doubao-seedream-4-5-251128';
+export const DEFAULT_DOUBAO_BASE_URL = 'https://ark.cn-beijing.volces.com/api/v3';
+export const DEFAULT_DOUBAO_MODEL = 'doubao-seedream-3-0-t2i';
+
 /** 默认 API key 环境变量名。 */
 export const DEFAULT_API_KEY_ENV = 'POND_IMAGE_API_KEY';
+export const DEFAULT_SEEDREAM_API_KEY_ENV = 'POND_SEEDREAM_API_KEY';
+export const DEFAULT_DOUBAO_API_KEY_ENV = 'POND_DOUBAO_API_KEY';
 
 /** ComfyUI 能出的常用画布（与 prompt.ASPECTS 对齐，另加正方形）。 */
 export const COMFY_SIZES = Object.freeze([
@@ -259,6 +281,88 @@ function normalizeOpenAIConfig(raw) {
   };
 }
 
+/**
+ * C6 云 adapter（seedream / doubao）的共用配置校验。两者都是方舟
+ * images/generations 协议，只差默认模型线与个别参数（guidance_scale）。
+ */
+function normalizeCloudImageConfig(raw, name, defaults, options = {}) {
+  if (raw !== undefined && !isPlainObject(raw)) fail(`${name} 配置必须是对象`);
+  const value = raw ?? {};
+
+  const costRaw = value.cost ?? {};
+  if (!isPlainObject(costRaw)) fail(`${name}.cost 必须是对象`);
+  if (costRaw.unit !== undefined && costRaw.unit !== 'perImage') {
+    fail(`${name}.cost.unit 只接受 perImage（收到 ${JSON.stringify(costRaw.unit)}）`);
+  }
+  const costValue = costRaw.value === undefined ? 0 : costRaw.value;
+  if (typeof costValue !== 'number' || !Number.isFinite(costValue) || costValue < 0) {
+    fail(`${name}.cost.value 必须是 >= 0 的有限数字`);
+  }
+
+  const supportsSeed = value.supportsSeed === undefined ? true : value.supportsSeed;
+  if (typeof supportsSeed !== 'boolean') fail(`${name}.supportsSeed 必须是布尔值`);
+
+  const watermark = value.watermark === undefined ? false : value.watermark;
+  if (typeof watermark !== 'boolean') fail(`${name}.watermark 必须是布尔值`);
+
+  const responseFormat = value.responseFormat === undefined ? 'b64_json' : value.responseFormat;
+  if (responseFormat !== 'b64_json' && responseFormat !== 'url') {
+    fail(`${name}.responseFormat 只支持 b64_json / url（收到 ${JSON.stringify(responseFormat)}）`);
+  }
+
+  const outputFormat = value.outputFormat === undefined ? 'png' : value.outputFormat;
+  if (!['png', 'jpeg', 'webp'].includes(outputFormat)) {
+    fail(`${name}.outputFormat 只支持 png / jpeg / webp（收到 ${JSON.stringify(outputFormat)}）`);
+  }
+
+  const model = value.model === undefined ? defaults.model : value.model;
+  if (typeof model !== 'string' || model.trim() === '') fail(`${name}.model 必须是非空字符串`);
+
+  const apiKeyEnv = value.apiKeyEnv === undefined ? defaults.apiKeyEnv : value.apiKeyEnv;
+  if (typeof apiKeyEnv !== 'string' || apiKeyEnv.trim() === '') {
+    fail(`${name}.apiKeyEnv 必须是非空环境变量名`);
+  }
+  if (value.apiKey !== undefined && (typeof value.apiKey !== 'string' || value.apiKey.trim() === '')) {
+    fail(`${name}.apiKey 必须是非空字符串（建议改用 apiKeyEnv）`);
+  }
+
+  let extraBody = null;
+  if (value.extraBody !== undefined && value.extraBody !== null) {
+    if (!isPlainObject(value.extraBody)) fail(`${name}.extraBody 必须是对象`);
+    extraBody = { ...value.extraBody };
+  }
+
+  let guidanceScale = null;
+  if (options.guidanceScale === true) {
+    if (value.guidanceScale !== undefined && value.guidanceScale !== null) {
+      if (typeof value.guidanceScale !== 'number' || !Number.isFinite(value.guidanceScale) || value.guidanceScale <= 0) {
+        fail(`${name}.guidanceScale 必须是 > 0 的有限数字`);
+      }
+      guidanceScale = value.guidanceScale;
+    }
+  }
+
+  return {
+    baseUrl: normalizeBaseUrl(value.baseUrl, `${name}.baseUrl`, defaults.baseUrl),
+    model: model.trim(),
+    apiKeyEnv: apiKeyEnv.trim(),
+    apiKey: typeof value.apiKey === 'string' ? value.apiKey.trim() : null,
+    supportsSeed,
+    watermark,
+    responseFormat,
+    outputFormat,
+    guidanceScale,
+    cost: { unit: 'perImage', value: costValue },
+    sizes: normalizeSizeList(value.sizes, `${name}.sizes`, defaults.sizes),
+    extraBody,
+    requestTimeoutMs: positiveNumber(
+      value.requestTimeoutMs,
+      `${name}.requestTimeoutMs`,
+      DEFAULT_OPENAI_REQUEST_TIMEOUT_MS,
+    ),
+  };
+}
+
 function normalizeChain(raw) {
   if (raw === undefined || raw === null) return [...DEFAULT_CHAIN];
   if (!Array.isArray(raw)) fail('chain 必须是 provider id 数组');
@@ -315,6 +419,8 @@ export function normalizeImageConfig(raw, options = {}) {
   // 未知顶层键不致命（向后兼容，留给 C6/C7 扩字段），也不覆盖已知字段。
   const comfyRaw = raw.comfyui ?? {};
   const openaiRaw = raw.openaiCompat ?? raw['openai-compat'] ?? {};
+  const seedreamRaw = raw.seedream ?? {};
+  const doubaoRaw = raw.doubao ?? {};
 
   const outDirRaw = raw.outDir ?? null;
   let outDir = null;
@@ -331,6 +437,18 @@ export function normalizeImageConfig(raw, options = {}) {
     outDir,
     comfyui: normalizeComfyConfig(comfyRaw, { baseDir, filePath }),
     openaiCompat: normalizeOpenAIConfig(openaiRaw),
+    seedream: normalizeCloudImageConfig(seedreamRaw, 'seedream', {
+      baseUrl: DEFAULT_SEEDREAM_BASE_URL,
+      model: DEFAULT_SEEDREAM_MODEL,
+      apiKeyEnv: DEFAULT_SEEDREAM_API_KEY_ENV,
+      sizes: [...SEEDREAM_SIZES],
+    }),
+    doubao: normalizeCloudImageConfig(doubaoRaw, 'doubao', {
+      baseUrl: DEFAULT_DOUBAO_BASE_URL,
+      model: DEFAULT_DOUBAO_MODEL,
+      apiKeyEnv: DEFAULT_DOUBAO_API_KEY_ENV,
+      sizes: [...DOUBAO_IMAGE_SIZES],
+    }, { guidanceScale: true }),
     defaults: normalizeDefaults(raw.defaults),
   };
 

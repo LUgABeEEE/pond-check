@@ -40,3 +40,4 @@ export * from './registry.mjs';
 export * from './events.mjs';
 export * from './budget.mjs';
 export * from './call.mjs';
+export * from './credentials.mjs';

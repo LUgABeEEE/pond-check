@@ -8,9 +8,16 @@
  *   tts.providers() → [{ id, name, voices, cost, local, available }]
  *   tts.voices()    → [{ id, name, provider, gender, langs }]
  *
- * 内置两个免费 adapter：
+ * 内置 adapter：
  *   edge     云（微软 Edge 朗读接口，免 key，音色最全）—— 默认首选
  *   command  本地（用户自带 CLI：piper / espeak / …，模板由配置给）—— 离线兜底
+ *   doubao   云（火山 Seed Audio，appId/token，约 1 元/分钟）—— C6
+ *   mimo     云（小米 MiMo，apiKey，按量）—— C6
+ *
+ * C6 的云 adapter 遵守「有 key 才需要」（规格 §7）：没配 key 时 provider 标
+ * available:false、被 resolve 的可用性过滤**跳过**，不报错、不崩、不碰网络；
+ * 配了 key 自动按 priority 进降级链（edge 50 → command 20 → doubao 15 → mimo 10，
+ * 与规格 §4 的默认链一致）。
  *
  * 执行走 shared/call.mjs 的统一调用器：
  *   - 单次超时 30s（CAPABILITY_TIMEOUTS.tts）；
@@ -54,6 +61,8 @@ import {
   fillTemplate,
   binaryAvailable,
 } from './command.mjs';
+import { createDoubaoTtsProvider } from './doubao.mjs';
+import { createMimoTtsProvider } from './mimo.mjs';
 import {
   segmentText,
   concatAudio,
@@ -88,6 +97,22 @@ function assertSpeed(speed) {
   if (typeof speed !== 'number' || !Number.isFinite(speed) || speed <= 0) {
     throw new TypeError('speak: speed 必须是大于 0 的有限数字');
   }
+}
+
+/**
+ * 计量口径跟随 provider 的 `cost.unit`（registry 的语义）：
+ *   perSecond / perMinute ⇒ units = 音频秒数（这两个口径就该按秒计量；
+ *     doubao 约 1 元/分钟，事件里的 costEstimate 才算得对）；
+ *   其余（perChar / perKChar / perCall）⇒ 沿用 C4 的字符数口径。
+ * 时长拿不到时返回 0（宁可少记，不把字符数冒充秒数）。
+ */
+function measureTtsUnits(provider, value, chars) {
+  const unit = provider?.cost?.unit;
+  if (unit === 'perSecond' || unit === 'perMinute') {
+    const ms = Number.isFinite(value?.durationMs) && value.durationMs > 0 ? value.durationMs : 0;
+    return ms / 1000;
+  }
+  return chars;
 }
 
 /** 未配置 command 时的占位描述：providers() 里如实标注「不可用 + 为什么」。 */
@@ -151,6 +176,16 @@ export function createTts(options = {}) {
     } else {
       registry.register('tts', unconfiguredCommandProvider());
     }
+    // C6 云 adapter：始终登记（providers() 里如实可见），没配 key 时
+    // checkAvailable()=false，resolve 的可用性过滤会把它们跳过 —— 不报错不崩。
+    registry.register('tts', createDoubaoTtsProvider({
+      ...(options.doubao ?? {}),
+      env: options.env ?? process.env,
+    }));
+    registry.register('tts', createMimoTtsProvider({
+      ...(options.mimo ?? {}),
+      env: options.env ?? process.env,
+    }));
   }
 
   const isAvailable = (provider) => {
@@ -208,7 +243,7 @@ export function createTts(options = {}) {
         format,
         outPath,
       },
-      units: text.length,
+      units: ({ value, provider }) => measureTtsUnits(provider, value, text.length),
       ...hooks,
       ...(speakOptions.timeoutMs !== undefined ? { timeoutMs: speakOptions.timeoutMs } : {}),
     });
@@ -290,6 +325,8 @@ export {
   tokenizeCommand,
   fillTemplate,
   binaryAvailable,
+  createDoubaoTtsProvider,
+  createMimoTtsProvider,
   segmentText,
   concatAudio,
   audioDurationMs,

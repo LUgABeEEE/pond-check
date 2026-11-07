@@ -34,6 +34,8 @@ import { CapabilityError, invoke } from '../shared/call.mjs';
 import { loadImageConfig, normalizeImageConfig } from './config.mjs';
 import { createComfyProvider } from './comfyui.mjs';
 import { createOpenAICompatProvider } from './openai-compat.mjs';
+import { createSeedreamProvider } from './seedream.mjs';
+import { createDoubaoImageProvider } from './doubao.mjs';
 import { detectImageFormat, resolveImageOutPath, writeImageFile } from './output.mjs';
 import { composePrompt, normalizeSeed, parseSize } from './prompt.mjs';
 import { ImageInputError } from './errors.mjs';
@@ -41,8 +43,8 @@ import { ImageInputError } from './errors.mjs';
 /** 能力名（事件流里的 capability 字段、shared 超时表的键）。 */
 export const IMAGE_CAPABILITY = 'image';
 
-/** 内置 adapter（C5 范围；C6 会补 seedream / doubao）。 */
-export const BUILTIN_IMAGE_PROVIDERS = Object.freeze(['comfyui', 'openai-compat']);
+/** 内置 adapter（C5：comfyui / openai-compat；C6 云：seedream / doubao）。 */
+export const BUILTIN_IMAGE_PROVIDERS = Object.freeze(['comfyui', 'openai-compat', 'seedream', 'doubao']);
 
 /** 默认 transport：内置 fetch。adapter 只认这个函数签名，测试注入假实现。 */
 const defaultTransport = (url, init) => fetch(url, init);
@@ -78,6 +80,10 @@ function buildProviders(config, ctx) {
   const builtin = new Map([
     ['comfyui', createComfyProvider(config.comfyui, ctx)],
     ['openai-compat', createOpenAICompatProvider(config.openaiCompat, ctx)],
+    // C6 云 adapter：始终登记；没配 key 时 available=false，generate 的
+    // 可用性过滤会把它们跳过 —— 不报错、不崩、不碰网络（有 key 才需要，规格 §7）。
+    ['seedream', createSeedreamProvider(config.seedream, ctx)],
+    ['doubao', createDoubaoImageProvider(config.doubao, ctx)],
   ]);
 
   const list = [];
@@ -159,8 +165,10 @@ export function createImageClient(options = {}) {
       comfyui: { ...config.comfyui, workflow: config.comfyui.workflow },
       openaiCompat: { ...config.openaiCompat },
     }));
-    if (clone?.openaiCompat) {
-      clone.openaiCompat.apiKey = config.openaiCompat.apiKey ? '[已隐藏]' : null;
+    for (const section of ['openaiCompat', 'seedream', 'doubao']) {
+      if (clone?.[section]) {
+        clone[section].apiKey = config[section].apiKey ? '[已隐藏]' : null;
+      }
     }
     return clone;
   }
@@ -308,3 +316,6 @@ export * from './config.mjs';
 export * from './transport.mjs';
 export * from './comfyui.mjs';
 export * from './openai-compat.mjs';
+export * from './generations.mjs';
+export * from './seedream.mjs';
+export * from './doubao.mjs';

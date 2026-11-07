@@ -193,7 +193,7 @@ function lastWorkflow(requests) {
  * 2. 接口形状
  * ================================================================== */
 
-test('接口·generate / providers 存在；默认配置下两个内置 provider 都列出但不可用', () => {
+test('接口·generate / providers 存在；默认配置下四个内置 provider 都列出但不可用', () => {
   assert.equal(typeof image.generate, 'function');
   assert.equal(typeof image.providers, 'function');
   assert.equal(typeof image.createImageClient, 'function');
@@ -201,7 +201,8 @@ test('接口·generate / providers 存在；默认配置下两个内置 provider
   const home = makeHome('default-config');
   const list = image.providers({ env: envFor(home) });
 
-  assert.deepEqual(list.map((item) => item.id), ['comfyui', 'openai-compat']);
+  // C6 起默认链含 seedream / doubao（规格 §5）：没 key 也要如实可见、标不可用。
+  assert.deepEqual(list.map((item) => item.id), ['comfyui', 'openai-compat', 'seedream', 'doubao']);
   for (const item of list) {
     assert.equal(typeof item.name, 'string');
     assert.ok(Array.isArray(item.sizes) && item.sizes.length > 0);
@@ -209,15 +210,20 @@ test('接口·generate / providers 存在；默认配置下两个内置 provider
     assert.equal(typeof item.cost.unit, 'string');
     assert.equal(typeof item.cost.value, 'number');
     assert.equal(typeof item.local, 'boolean');
-    assert.equal(item.available, false, '默认（没有工作流、没有 key）两个 provider 都必须标不可用');
+    assert.equal(item.available, false, '默认（没有工作流、没有 key）四个 provider 都必须标不可用');
   }
 
-  const [comfy, openai] = list;
+  const [comfy, openai, seedream, doubao] = list;
   assert.equal(comfy.local, true);
   assert.equal(comfy.cost.value, 0, '本地 provider 成本恒 0');
   assert.match(comfy.unavailableReason, /workflow/);
   assert.equal(openai.local, false);
   assert.match(openai.unavailableReason, /API key/);
+  // C6 云 adapter：「没配 key」必须点名具体 key 名（与「配了但调用失败」分开）。
+  assert.equal(seedream.local, false);
+  assert.match(seedream.unavailableReason, /POND_SEEDREAM_API_KEY/);
+  assert.equal(doubao.local, false);
+  assert.match(doubao.unavailableReason, /POND_DOUBAO_API_KEY/);
   assert.equal(fetchCalls, 0, 'providers() 不许联网探测');
 });
 
@@ -228,11 +234,15 @@ test('接口·默认配置 generate 会明确失败（列出每个 provider 的�
     (error) => {
       assert.equal(error.name, 'CapabilityError');
       assert.equal(error.capability, 'image');
-      assert.equal(error.failures.length, 2);
+      assert.equal(error.failures.length, 4);
       assert.ok(error.message.includes('comfyui'), '必须点名 comfyui');
       assert.ok(error.message.includes('openai-compat'), '必须点名 openai-compat');
+      assert.ok(error.message.includes('seedream'), '必须点名 seedream');
+      assert.ok(error.message.includes('doubao'), '必须点名 doubao');
       assert.ok(/workflow/.test(error.message), '必须说明工作流没配');
       assert.ok(/API key/.test(error.message), '必须说明缺 API key');
+      assert.ok(/POND_SEEDREAM_API_KEY/.test(error.message), 'seedream 要点名缺哪个 key');
+      assert.ok(/POND_DOUBAO_API_KEY/.test(error.message), 'doubao 要点名缺哪个 key');
       return true;
     },
   );
