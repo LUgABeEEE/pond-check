@@ -738,7 +738,14 @@
         "判重表不存在且日志里没有「已处理」类计数",
         "sqlite 判重表且 node:sqlite 不可用、也无法按行计数（reason=sqlite_no_driver）",
         "该指标超时（reason=timeout）"
-      ]
+      ],
+      "variants": {
+        "noTimestamps": {
+          "status": "unknown",
+          "phenomenon": "判重表找到了，但里面没有时间戳，算不出今天新增了多少",
+          "nextStep": "这条鱼可能用了不带时间的判重格式。看总条目数就行，今天新增这一项这次跳过。"
+        }
+      }
     },
     "health": {
       "id": "health",
@@ -1089,10 +1096,12 @@
             "targets": "credentials.knownCredentialPaths.candidates",
             "passDaysLtRef": "credentialStaleWarnDays",
             "warnDaysLtRef": "credentialStaleFailDays",
-            "fail": "超过 credentialStaleFailDays 或文件不存在",
+            "fail": "超过 credentialStaleFailDays",
             "detailTemplate": "登录态最近更新于 {staleDays} 天前",
             "privacy": "只输出天数，绝不输出路径或文件名",
-            "fix": "登录态大概率过期了：重新登录一次，把新的 cookie/token 存回原处，再重启她。"
+            "fix": "登录态大概率过期了：重新登录一次，把新的 cookie/token 存回原处，再重启她。",
+            "unknown": "白名单里的凭据文件一个都不存在 —— 这条鱼可能根本不需要登录态（桌面宠物、纯 DSH 插件），或登录态存在别处",
+            "note": "「没找到白名单文件」是事实，「登录一定坏了」是推断。工具只报事实，所以降为 unknown。"
           },
           {
             "id": "homeWritable",
@@ -1304,6 +1313,11 @@
           "phenomenon": "这份配置里没有版本号，判断不了漂没漂（不是「没漂」）。",
           "nextStep": "在配置里加一行 schemaVersion，或者用 --expect-schema 3 告诉体检你期望的版本。",
           "vars": []
+        },
+        "renames_unchecked": {
+          "status": "unknown",
+          "phenomenon": "改名表还没核对过，看不出有没有残留旧字段",
+          "nextStep": "这不算问题：等你确信配置是最新的，或手动比对一次配置键名即可。"
         }
       },
       "unknownWhen": [

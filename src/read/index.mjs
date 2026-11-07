@@ -76,7 +76,7 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import { readLogTail } from './log.mjs';
+import { readLogTail, MAX_TAIL_LINES } from './log.mjs';
 import {
   readDedupeStore,
   readConfigState,
@@ -642,7 +642,12 @@ async function readPondInternal(pond, options, ctx) {
   // ---- 日志（D3a，异步）------------------------------------------------
   let log = null;
   if (paths.log) {
-    const raw = await readLogTail(paths.log, { timeoutMs: ctx.logTimeoutMs });
+    // tailLines 必须显式传上限：默认 50 行对 rhythm 的近 7 天窗口远远不够。
+    // 196 行日志只回 50 行时，rhythm 只能落 unknown —— 这不是保守，是覆盖不足。
+    const raw = await readLogTail(paths.log, {
+      timeoutMs: ctx.logTimeoutMs,
+      tailLines: MAX_TAIL_LINES,
+    });
     const st = await statSafe(paths.log);
     log = {
       ...raw,

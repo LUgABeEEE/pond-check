@@ -736,11 +736,14 @@ function buildCheck(check, ctx) {
       const foundCount = isFiniteNumber(cred.foundCount) ? cred.foundCount : 0;
       const newest = isFiniteNumber(cred.newestAgeSec) ? cred.newestAgeSec : null;
       if (foundCount === 0 || newest === null) {
-        // rules：文件不存在 → fail。登录态都没有，她当然发不出去。
+        // rules（队长裁定）：文件不存在 → unknown，不是 fail。
+        // 「没找到白名单文件」是事实，「登录一定坏了」是推断。实机 2 条 DSH 插件型鱼
+        // 都因为这条被判成 deps=broken，而它们根本不需要 B 站登录态。
+        // 工具只报事实；「可能不需要登录态」这句也由 rules 的 unknown 文案给出。
         return {
           ...base,
-          status: 'fail',
-          detail: '登录态：已知的凭据文件一个都不存在（先登录一次，把登录态存回原处）',
+          status: 'unknown',
+          detail: '登录态：已知的凭据文件一个都不存在 —— 这条鱼可能不需要登录态，或登录态存在别处',
         };
       }
       const staleDays = Math.floor(newest / SECONDS_PER_DAY);

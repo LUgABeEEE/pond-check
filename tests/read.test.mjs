@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { readPond, readAll, resolvePondSources } from '../src/read/index.mjs';
-import { loadKeywordCategories, DEFAULT_TAIL_BYTES } from '../src/read/log.mjs';
+import { loadKeywordCategories, DEFAULT_TAIL_BYTES, MAX_TAIL_LINES } from '../src/read/log.mjs';
 
 const ROOTS = [];
 
@@ -131,7 +131,10 @@ test('超大日志：只读尾部预算字节，窗口外的旧错误不算进�
   assert.equal(result.log.truncated, true);
   assert.equal(result.log.fromOffset + result.log.bytesRead, result.log.size);
   assert.ok(result.log.lineCount > 1000, '窗口里应该还有上千行');
-  assert.equal(result.log.lines.length, 50, '返回的最后行数默认 50');
+  // 契约变更（D4a 反馈）：readPond 必须显式传 tailLines 上限。
+  // 只回默认 50 行时，196 行覆盖 7 天的真实日志只能给 rhythm 1.7 天可见度，
+  // rhythm 会永远落 unknown —— 这不是保守，是覆盖不足。
+  assert.equal(result.log.lines.length, MAX_TAIL_LINES, 'readPond 必须传满行数上限，否则 rhythm 覆盖不足');
 
   // 窗口外的 429 不算命中；窗口内的 412 必须命中
   const rate = result.log.keywords.categories.find((c) => c.id === 'rateLimited');

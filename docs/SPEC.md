@@ -114,7 +114,7 @@ P4  报「没找到鱼」     一行结论 + 一行「你现在该做什么」�
 | --- | --- | --- | --- | --- |
 | liveness | 日志文件 mtime | session 记录 mtime | 判重表 mtime / 进程启动时间 | `unknown`，`missing:["log","session","dedupe"]` |
 | rhythm | 日志行内时间戳按自然日分桶 | session 文件首末时间戳分桶 | 判重表条目日期分桶 | `unknown`，`missing:["timestamps"]` |
-| throughput | 判重表条目数 | sqlite 判重表（`node:sqlite` 可用时 `SELECT COUNT(*)`） | 日志里「已处理」类行的计数 | `unknown`，`missing:["dedupe"]` |
+| throughput | 判重表条目数 | sqlite 判重表（`node:sqlite` 可用时 `SELECT COUNT(*)`） | — | `unknown`，`missing:["dedupe"]` |
 | health | 日志尾部 24h 窗口 | 无时间戳则尾部 N 行（标 `windowApproximated:true`） | 进程 stderr 落盘文件 | `unknown`，`missing:["log"]` |
 | deps | 逐项探测（见 §4.5） | 从日志里猜（如 `ffmpeg: command not found`） | — | 单项 `unknown`，全 `unknown` → 指标 `unknown` |
 | drift | 配置里的 `schemaVersion` | 配置里的 `version` / 目录内插件 `package.json` | 字段改名表反推（旧字段存在 + 新字段缺失） | `unknown`，`missing:["schemaVersion"]` |
@@ -242,6 +242,12 @@ P4  报「没找到鱼」     一行结论 + 一行「你现在该做什么」�
 
 ### 4.3 throughput · 工作量
 
+> **裁定（2026-11-07）**：判重表「不存在」和「存在但空」是两件不同的事。
+> 不存在 = 读不到 = `unknown`；存在但 0 条 = 事实 = `empty`。
+> 早期版本把两者都归为 `empty`，会把「这只鱼根本没有账本」误报成「她一次都没干活」。
+> 另：日志里「已处理」类计数这条退路**已删除** —— 它需要猜关键词，而猜出来的关键词会误判。
+
+
 > **问题**：她到底干了多少活？今天有没有干？
 
 - 主数据：**判重表**（`dedupe store`）。
@@ -253,11 +259,11 @@ P4  报「没找到鱼」     一行结论 + 一行「你现在该做什么」�
 
 | level | 条件 | severity |
 | --- | --- | --- |
-| `empty` 空账本 | `totalEntries == 0` 或判重表不存在但窝存在 | bad |
+| `empty` 空账本 | `totalEntries == 0`（**表在、但一条都没有** —— 这是事实） | bad |
 | `productive` 在干活 | `todayNew >= 1` | ok |
 | `stalled` 停摆 | `daysSinceLastNew >= 3` | bad |
 | `quiet` 今天歇着 | 其余情况（`totalEntries > 0` 且 `todayNew == 0` 且 `daysSinceLastNew < 3`） | watch |
-| `unknown` | 判重表找不到，且日志里也没有「已处理」类计数（`missing:["dedupe"]`） | unknown |
+| `unknown` | 判重表**找不到**（`missing:["dedupe"]`），或表在但没有时间戳（见 `variants.noTimestamps`） | unknown |
 
 **常量**：`stalledAfterDays=3`、`productiveTodayMin=1`、`sampleWindowDays=7`、`maxEntriesCounted=100000`。
 
@@ -395,7 +401,7 @@ P4  报「没找到鱼」     一行结论 + 一行「你现在该做什么」�
 | --- | --- |
 | liveness | 所有 sourceOrder 源都不存在 / 全部无效（未来时间、epoch 0）/ 全部超时 |
 | rhythm | 没有任何带可解析时间戳的记录 |
-| throughput | 判重表不存在且日志无「已处理」计数 / sqlite 无驱动且无法数行 |
+| throughput | 判重表不存在 / 表在但无时间戳 / sqlite 无驱动且无法数行 |
 | health | 没有日志文件 / 日志尾部无可读行 / 读取被权限拒绝 |
 | deps | 有任一项检查探不出结论（`unknownCount >= 1`）且无 `fail`/`warn` / 定位不到窝 |
 | drift | 四个版本字段一个都没有 |
