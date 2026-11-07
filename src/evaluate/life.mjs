@@ -71,6 +71,7 @@ import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import { parseTimestamp } from '../read/log.mjs';
+import { isSensitiveFileName, isSensitiveDirName } from '../discover/generic.mjs';
 
 /* ------------------------------------------------------------------ *
  * 时间单位：只用来「说话」和分桶，不参与档位判定。
@@ -105,6 +106,28 @@ let defaultRulesCache = null;
  * @param {object} [options]
  * @returns {object|null}
  */
+/**
+ * customPath 是不是一个「不该被当配置文件读」的路径（D8-L1）。
+ *
+ * 检查两件事：文件名命中凭证清单，或者它所在的目录是敏感目录。
+ * 任一命中就返回 true —— 调用方应视为「读不到」，返回 null 而不是硬读。
+ */
+function isSensitivePath(target) {
+  if (typeof target !== 'string' || target === '') return true;
+  const normalized = target.replace(/\\/gu, '/');
+  const segments = normalized.split('/').filter(Boolean);
+  if (segments.length === 0) return false;
+
+  const fileName = segments[segments.length - 1];
+  if (isSensitiveFileName(fileName)) return true;
+
+  // 目录逐段看：任何一段命中敏感目录模式都不读（比如 ~/.ssh/config）
+  for (const segment of segments.slice(0, -1)) {
+    if (isSensitiveDirName(segment)) return true;
+  }
+  return false;
+}
+
 export function loadRules(options = {}) {
   const opts = options && typeof options === 'object' ? options : {};
   if (opts.rules && typeof opts.rules === 'object') return opts.rules;
@@ -117,6 +140,12 @@ export function loadRules(options = {}) {
 
   if (customPath) {
     // 每个调用都现读：测试要能在同一进程里换一份 rules.json 再断言档位跟着变
+    //
+    // 但先过一道名字闸（D8-L1）：customPath 来自 options 或环境变量 POND_CHECK_RULES，
+    // 都是「调用方说了算」的路径。没有这道闸，库 API 就能让它去读 ~/.ssh/id_ed25519
+    // 或任何 credentials.json。CLI 侧本来就走不到这里（--rules 参数不存在），
+    // 但「CLI 走不到」不等于「代码不该防」——这一层的价值就在于它不依赖调用方自律。
+    if (isSensitivePath(customPath)) return null;
     try {
       return JSON.parse(fs.readFileSync(customPath, 'utf8'));
     } catch {
