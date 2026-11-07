@@ -16,7 +16,25 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
-      - name: 语法检查
-        run: node --check src/cli.mjs
+
+      - name: 语法检查（src 下全部 .mjs）
+        run: |
+          count=0
+          while IFS= read -r f; do
+            node --check "$f" || exit 1
+            count=$((count+1))
+          done < <(find src -name '*.mjs' -type f)
+          echo "已检查 $count 个文件"
+
       - name: 单元测试
         run: npm test
+
+      - name: 零依赖校验
+        run: |
+          node --input-type=module -e "
+          import fs from 'node:fs';
+          const p = JSON.parse(fs.readFileSync('package.json','utf8'));
+          const d = Object.keys(p.dependencies || {});
+          if (d.length) { console.error('存在运行时依赖: ' + d.join(',')); process.exit(1); }
+          console.log('零运行时依赖 ✓');
+          "

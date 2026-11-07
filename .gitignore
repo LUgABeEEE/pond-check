@@ -1,7 +1,18 @@
+# 依赖与产物
 node_modules/
 dist/
-*.log
-.DS_Store
-pond-check-*.html
 .coverage/
 tmp/
+
+# 日志与临时输出
+*.log
+pond-check-*.html
+
+# 系统
+.DS_Store
+
+# ---- 例外：测试夹具必须入库 ----
+# 夹具要真实模拟鱼的家目录（含 node_modules / 日志），否则测试无法复现
+!tests/fixtures/**/node_modules/
+!tests/fixtures/**/node_modules/**
+!tests/fixtures/**/*.log
