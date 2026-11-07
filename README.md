@@ -88,9 +88,9 @@ chmod +x ~/.local/bin/pond-check
 **真实运行**（下面这段是真机原样复制的输出——这台机器上只有两个 DSH 插件、都从没跑过，所以工具诚实地说「无运行痕迹」，这正是它面对「不能诊断」时的样子）：
 
 ```text
-🐟 pond-check · 2026-11-07 21:17 · linux/node 22.23.4
-❓ dsh-whale-widget  判不出  缺 日志
-❓ dsh-whale-widget  判不出  缺 日志
+🐟 pond-check · 2026-11-07 21:48 · linux/node 22.23.4
+❓ widget（…105-1703）  判不出  缺 日志
+❓ hale-widget（…web）  判不出  缺 日志
 → 最该做：dsh-whale-widget：用 --root 指明她的窝
     窝：~/.dsh/profiles/web-021-rollback-20261105-1703/node_modules/dsh-whale-widget
 ※ 找到 2 个名字像鱼的插件，但没有任何运行痕迹（无日志/无判重表/无会话），可能只是界面组件。

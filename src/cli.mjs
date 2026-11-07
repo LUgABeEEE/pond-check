@@ -29,7 +29,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import discoverPonds from './discover/index.mjs';
 import { readAll } from './read/index.mjs';
@@ -349,8 +349,24 @@ export async function runCli(argv, deps = {}) {
  * 5. 入口守卫：被 import 时不跑，被 node 执行时才跑
  * ------------------------------------------------------------------ */
 
-const isMainModule = typeof process.argv[1] === 'string'
-  && import.meta.url === pathToFileURL(process.argv[1]).href;
+/**
+ * 被 `node src/cli.mjs` 直接执行了吗？
+ *
+ * 注意 `npm install -g` 装出来的 `bin/pond-check` 是**符号链接**，指向
+ * `node_modules/pond-check/src/cli.mjs`。这时 `process.argv[1]` 是链接本身，
+ * 而 `import.meta.url` 是 Node 解析后的**真实文件**，字符串直接比会不相等 ——
+ * 命令会静默退出 0、一个字都不输出（D9 集成验收实测到的坑）。
+ * 所以两边都过一遍 realpath 再比。
+ */
+const isMainModule = (() => {
+  if (typeof process.argv[1] !== 'string' || process.argv[1] === '') return false;
+  try {
+    return fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    // realpath 失败（路径不存在等）→ 退回原始的字符串比较
+    return import.meta.url === pathToFileURL(process.argv[1]).href;
+  }
+})();
 
 if (isMainModule) {
   runCli(process.argv.slice(2)).then((code) => {
