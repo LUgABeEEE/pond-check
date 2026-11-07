@@ -69,8 +69,15 @@ function loadRules() {
 
 const RULES = loadRules();
 
-/** 本模块默认只读 64 KiB —— 比预算上限还省，日志再大也只是一次 seek + 一次 read */
-export const DEFAULT_TAIL_BYTES = 64 * 1024;
+/** 默认读多少字节：与 SPEC §3.4 / rules.json budget.tailBytes 对齐（256 KiB）。
+ *
+ * 早期实现这里的默认值是 64 KiB，而 SPEC 与 rules.json 都写 262144 —— 那是
+ * 任务描述写错了。默认值必须等于预算上限，否则调用方不显式传参就会把
+ * health 的 24h 窗口静默缩到 64 KiB，日志一大就漏掉真正的 429。
+ * 调用方仍可显式传更小的 maxBytes 来省内存。 */
+export const DEFAULT_TAIL_BYTES = Number(RULES?.budget?.tailBytes) > 0
+  ? Number(RULES.budget.tailBytes)
+  : 262144;
 
 /** 物理读取硬上限：与 SPEC §3.4 / rules.json budget.tailBytes 对齐（256 KiB） */
 export const MAX_TAIL_BYTES = Number(RULES?.budget?.tailBytes) > 0
