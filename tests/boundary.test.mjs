@@ -26,6 +26,17 @@
  *   - 时间基准统一取真实 now：文件 mtime 是真实活动痕迹，用假 now 反而测不到东西。
  *     需要「旧痕迹」的用例自己 utimes 往回调。
  *
+ * 环境敏感点留痕（D8-L10 / AUDIT-TESTS §7，v0.1.1）：
+ *   1) chmod 000 在 root 下不生效（root 无视权限位）、Windows 上没有 chmod 语义
+ *      → 权限类用例用 CHMOD_SKIP 守卫，只会在「非 root 的 Linux/macOS」上跑；
+ *   2) 软链 / FIFO 是 POSIX 能力，Windows 上直接 skip；容器里没有 mkfifo 时
+ *      在用例内部 t.skip，绝不假装测过；
+ *   3) elapsed < SLOW_BUDGET_MS 是墙上时钟断言 —— CI 抖动/慢文件系统时可能偶发红。
+ *      5 秒只用来抓「预算保护完全失效」（整份读、死递归），不是性能门槛；
+ *   4) 1 GiB 稀疏文件：部分容器/文件系统会把 ftruncate 落成真实占用 → 建完先看
+ *      stat.blocks，不稀疏就 skip，避免写爆 CI 磁盘；
+ *   5) 1 ms 超时在 tests/discover.test.mjs，已改成 timeoutMs:0（确定性降级）。
+ *
  * 两个 { skip } 标记的用例是**已知缺陷探针**（B1 / B2），断言代码已经写好，
  * 收口任务修完 src 把 skip 去掉即可转绿；缺陷详情见任务 output。
  */
@@ -40,7 +51,7 @@ import { performance } from 'node:perf_hooks';
 
 import { readPond, readAll } from '../src/read/index.mjs';
 import { readLogTail } from '../src/read/log.mjs';
-import { evaluate } from '../src/evaluate/index.mjs';
+import { evaluate, INDICATOR_IDS } from '../src/evaluate/index.mjs';
 import { discoverPonds } from '../src/discover/index.mjs';
 import { renderHtml } from '../src/render/html.mjs';
 import { renderText } from '../src/render/text.mjs';
@@ -60,6 +71,31 @@ const TAIL_LINES = Number(RULES?.budget?.tailLines) > 0 ? Number(RULES.budget.ta
 
 /** 数据类指标：不依赖宿主机装了什么，边界用例只对它们下断言。 */
 const DATA_INDICATORS = ['liveness', 'rhythm', 'throughput', 'health', 'drift'];
+
+/**
+ * 墙上时钟预算（环境敏感点 #3）：只抓「预算保护完全失效」，不是性能门槛。
+ * CI 抖动 / 慢文件系统上偶发红时先复跑，不要单次判缺陷；真要调就调这一个常量。
+ */
+const SLOW_BUDGET_MS = 5000;
+
+/**
+ * chmod 用例的 skip 说明（环境敏感点 #1）：写清为什么跳过、在什么环境会跑。
+ * root 无视权限位（CAP_DAC_OVERRIDE），chmod 000 后照样读得到，测不出降级。
+ */
+const CHMOD_SKIP = 'chmod 000 只对非 root 的 POSIX 用户生效（root 无视权限位，Windows 无 chmod 语义）；'
+  + '权限降级用例在「非 root 的 Linux/macOS」上执行，root / Windows 环境没有可验证的权限边界';
+
+/** 软链用例的 skip 说明（环境敏感点 #2）：POSIX 软链语义，Windows 上不适用。 */
+const SYMLINK_SKIP = '符号链接是 POSIX 能力（Windows 的 junction/symlink 语义不同）；'
+  + '软链成环用例在 Linux/macOS 上执行';
+
+/** FIFO 的 skip 说明（环境敏感点 #2）：mkfifo 是 POSIX 工具，容器里也可能没装。 */
+const FIFO_SKIP = 'FIFO 需要 POSIX 的 mkfifo（Windows 没有；精简容器里也可能没装）；'
+  + '该用例在带 mkfifo 的 Linux/macOS 上执行';
+
+/** 1 GiB 稀疏文件的 skip 说明（环境敏感点 #4）：不支持 sparse 的文件系统会真占盘。 */
+const SPARSE_SKIP = '1 GiB 用例依赖稀疏文件（ftruncate 不真实占盘）；'
+  + '当前文件系统不支持 sparse 时跳过，避免写爆 CI 磁盘。在 ext4/xfs/apfs 等支持 sparse 的文件系统上执行';
 
 /** chmod 在 root 下不生效、在 Windows 上不存在 —— 这两种情况相关用例只能跳过。 */
 const CAN_CHMOD = process.platform !== 'win32' && (process.getuid?.() ?? 0) !== 0;
@@ -172,14 +208,14 @@ test('discoverPonds 扫不存在的家目录：返回空数组、不抛、不超
 
   assert.ok(Array.isArray(ponds), '必须是数组（调用方直接 .map）');
   assert.equal(ponds.length, 0);
-  assert.ok(elapsed < 5000, `扫空目录用了 ${elapsed.toFixed(0)}ms，太慢，可能没走预算上限`);
+  assert.ok(elapsed < SLOW_BUDGET_MS, `扫空目录用了 ${elapsed.toFixed(0)}ms，太慢，可能没走预算上限`);
 });
 
 /* ------------------------------------------------------------------ *
  * 2. 文件无权限（chmod 000）→ 降级 null + reason
  * ------------------------------------------------------------------ */
 
-test('文件无权限（chmod 000）：日志降级成 ok:false + reason，来源标 unreadable，不抛', { skip: CAN_CHMOD ? false : 'chmod 需要非 root 的 POSIX 环境' }, async () => {
+test('文件无权限（chmod 000）：日志降级成 ok:false + reason，来源标 unreadable，不抛', { skip: CAN_CHMOD ? false : CHMOD_SKIP }, async () => {
   const root = makePond('denied', { 'app.log': '2026-11-07T10:00:00Z 她刚醒\n' });
   const logPath = path.join(root, 'app.log');
   fs.chmodSync(logPath, 0o000);
@@ -198,7 +234,7 @@ test('文件无权限（chmod 000）：日志降级成 ok:false + reason，来�
   assert.equal(fish.indicators.health.level, 'unknown', '读不到的日志不许说成「干净」');
 });
 
-test('配置 / 判重表无权限：同样降级成 reason，不是「0 条」「没漂」', { skip: CAN_CHMOD ? false : 'chmod 需要非 root 的 POSIX 环境' }, async () => {
+test('配置 / 判重表无权限：同样降级成 reason，不是「0 条」「没漂」', { skip: CAN_CHMOD ? false : CHMOD_SKIP }, async () => {
   const root = makePond('denied-state', {
     'config.json': JSON.stringify({ schemaVersion: 1 }),
     'processed.json': JSON.stringify([{ bvid: 'BV1', processedAt: NOW - 60_000 }]),
@@ -293,8 +329,35 @@ test('日志超大（约 8 MiB）：只读尾部 —— 命中尾标记、读不
   assert.ok(!tailText.includes('HEADONLY-MARKER-aaaa'), '文件头的内容不该出现在尾部窗口里 —— 读的不是尾部');
 });
 
-test('日志极大（1 GiB 稀疏文件）：读取量仍有界，不 OOM、不超时', async () => {
+/**
+ * 探测目录所在文件系统是否真支持稀疏文件（环境敏感点 #4）。
+ * 先建 16 MiB 的探针再 ftruncate：真占盘（allocated >= size/2）或拿不到 blocks
+ * 都算是「不支持/不可确认」，调用方 skip，绝不把 1 GiB 写进这种文件系统。
+ */
+function supportsSparseFiles(dir) {
+  const probe = path.join(dir, '.sparse-probe');
+  const probeSize = 16 * 1024 * 1024;
+  const fd = fs.openSync(probe, 'w');
+  try {
+    fs.ftruncateSync(fd, probeSize);
+  } finally {
+    fs.closeSync(fd);
+  }
+  try {
+    const st = fs.statSync(probe);
+    const allocatedBytes = Number(st.blocks) * 512;
+    return Number.isFinite(allocatedBytes) && allocatedBytes >= 0 && allocatedBytes < probeSize / 2;
+  } finally {
+    fs.rmSync(probe, { force: true });
+  }
+}
+
+test('日志极大（1 GiB 稀疏文件）：读取量仍有界，不 OOM、不超时', { skip: process.platform === 'win32' ? SPARSE_SKIP : false }, async (t) => {
   const root = makePond('sparse-log');
+  if (!supportsSparseFiles(root)) {
+    t.skip(SPARSE_SKIP);
+    return;
+  }
   const logPath = path.join(root, 'app.log');
   const marker = Buffer.from('TAILONLY-SPARSE-MARKER-cccc\n', 'utf8');
   const size = 1024 * 1024 * 1024;
@@ -307,13 +370,20 @@ test('日志极大（1 GiB 稀疏文件）：读取量仍有界，不 OOM、不�
     fs.closeSync(fd);
   }
 
+  // 前提校验：这个 1 GiB 文件确实没有真实占盘，否则后面的「不 OOM」会变成测磁盘
+  const allocatedBytes = Number(fs.statSync(logPath).blocks) * 512;
+  assert.ok(
+    Number.isFinite(allocatedBytes) && allocatedBytes < size / 2,
+    `1 GiB 夹具没有保持稀疏（实际占盘 ${allocatedBytes} 字节），用例前提不成立`,
+  );
+
   const started = performance.now();
   const { read } = await inspect(root);
   const elapsed = performance.now() - started;
 
   assert.equal(read.log.ok, true);
   assert.ok(read.log.bytesRead <= TAIL_BYTES, `1 GiB 文件读了 ${read.log.bytesRead} 字节 —— 预算失效`);
-  assert.ok(elapsed < 5000, `读一个 1 GiB 的稀疏日志用了 ${elapsed.toFixed(0)}ms，体检会卡住用户机器`);
+  assert.ok(elapsed < SLOW_BUDGET_MS, `读一个 1 GiB 的稀疏日志用了 ${elapsed.toFixed(0)}ms，体检会卡住用户机器`);
 });
 
 test('单行 1 MiB 的日志：行被裁剪，不 OOM、不崩', async () => {
@@ -405,7 +475,7 @@ test(
  * 6. 符号链接成环
  * ------------------------------------------------------------------ */
 
-test('符号链接成环（自指 / 互指）：读取在有限时间内收敛，不无限递归', async () => {
+test('符号链接成环（自指 / 互指）：读取在有限时间内收敛，不无限递归', { skip: process.platform === 'win32' ? SYMLINK_SKIP : false }, async () => {
   const root = makePond('symlink-cycle', { 'config.json': JSON.stringify({ schemaVersion: 1 }) });
   fs.symlinkSync(root, path.join(root, 'self'), 'dir');
   fs.symlinkSync(path.join(root, 'self'), path.join(root, 'self2'), 'dir');
@@ -417,11 +487,11 @@ test('符号链接成环（自指 / 互指）：读取在有限时间内收敛�
   const elapsed = performance.now() - started;
 
   assert.equal(read.ok, true);
-  assert.ok(elapsed < 5000, `环状软链让读取跑了 ${elapsed.toFixed(0)}ms，疑似递归`);
+  assert.ok(elapsed < SLOW_BUDGET_MS, `环状软链让读取跑了 ${elapsed.toFixed(0)}ms，疑似递归`);
   assert.equal(report.fishes.length, 1);
 });
 
-test('符号链接成环：discoverPonds 不递归、不挂死，端到端仍出报告', async () => {
+test('符号链接成环：discoverPonds 不递归、不挂死，端到端仍出报告', { skip: process.platform === 'win32' ? SYMLINK_SKIP : false }, async () => {
   const home = path.join(TEMP_ROOT, 'cycle-home');
   const fishDir = path.join(home, 'bili-whale-cycle');
   fs.mkdirSync(path.join(fishDir, 'logs'), { recursive: true });
@@ -436,21 +506,25 @@ test('符号链接成环：discoverPonds 不递归、不挂死，端到端仍出
   const elapsed = performance.now() - started;
 
   assert.ok(Array.isArray(ponds));
-  assert.ok(elapsed < 5000, `发现阶段跑了 ${elapsed.toFixed(0)}ms，疑似顺着软链递归`);
+  assert.ok(elapsed < SLOW_BUDGET_MS, `发现阶段跑了 ${elapsed.toFixed(0)}ms，疑似顺着软链递归`);
   assert.ok(ponds.length >= 1, '名字像鱼、特征齐全的目录应当被认出来');
 
   // 真走一遍 发现 → 读取 → 判定：软链环不许让后半程卡住或丢鱼
   const reads = await readAll(ponds, { now: NOW, home: TEMP_ROOT });
   const report = evaluate({ ponds: reads }, { now: NOW });
   assert.equal(report.fishes.length, ponds.length, '发现了几条就要在报告里出现几条');
-  assert.ok(report.fishes.every((fish) => fish.indicators !== null), '每一条都要有六格');
+  // D8c 弱断言 #4：`indicators !== null` 只证明不是 null，六键缺几个都能过。
+  // 直接锁键集合（顺序也锁），渲染层按这个顺序遍历。
+  for (const fish of report.fishes) {
+    assert.deepEqual(Object.keys(fish.indicators), INDICATOR_IDS, `${fish.id} 的六格键集合不对`);
+  }
 });
 
 /* ------------------------------------------------------------------ *
  * 7. 假健康反例：目录在，产物全读不到
  * ------------------------------------------------------------------ */
 
-test('假健康反例：目录存在但所有产物都读不到 → 数据类指标没有一个「正常」', { skip: CAN_CHMOD ? false : 'chmod 需要非 root 的 POSIX 环境' }, async () => {
+test('假健康反例：目录存在但所有产物都读不到 → 数据类指标没有一个「正常」', { skip: CAN_CHMOD ? false : CHMOD_SKIP }, async () => {
   const root = makePond('all-unreadable', {
     'app.log': '2026-11-07T10:00:00Z 她干过活\n',
     'config.json': JSON.stringify({ schemaVersion: 1 }),
@@ -601,7 +675,7 @@ test('判重表是二进制垃圾：工作量判不出（不是「0 条」）', 
   assert.equal(fish.indicators.throughput.level, 'unknown');
 });
 
-test('日志路径是 FIFO：不挂住（体检工具绝不能在用户机器上卡死）', { skip: process.platform === 'win32' ? 'Windows 没有 mkfifo' : false }, async (t) => {
+test('日志路径是 FIFO：不挂住（体检工具绝不能在用户机器上卡死）', { skip: process.platform === 'win32' ? FIFO_SKIP : false }, async (t) => {
   const root = path.join(TEMP_ROOT, 'fifo-pond');
   fs.mkdirSync(root, { recursive: true });
   const fifoPath = path.join(root, 'app.log');
@@ -609,7 +683,7 @@ test('日志路径是 FIFO：不挂住（体检工具绝不能在用户机器上
     execFileSync('mkfifo', [fifoPath], { stdio: 'ignore' });
   } catch {
     // 没有 mkfifo 的环境（容器里偶尔没有）老实标跳过，不假装测过
-    t.skip('这个环境没有 mkfifo');
+    t.skip(FIFO_SKIP);
     return;
   }
 
@@ -699,7 +773,7 @@ test('目录条目很多（300 个）：读取有界、不超时', async () => {
   const elapsed = performance.now() - started;
 
   assert.equal(read.ok, true);
-  assert.ok(elapsed < 5000, `扫 300 个条目用了 ${elapsed.toFixed(0)}ms，预算保护可能没生效`);
+  assert.ok(elapsed < SLOW_BUDGET_MS, `扫 300 个条目用了 ${elapsed.toFixed(0)}ms，预算保护可能没生效`);
 });
 
 /* ------------------------------------------------------------------ *
@@ -721,10 +795,24 @@ test('所有边界产物都能渲染：HTML / 文本 / JSON 都不抛，HTML 零
   const text = renderText(report);
   const json = renderJson(report);
 
-  assert.ok(html.length > 0);
-  assert.ok(text.length > 0);
+  // D8c 弱断言 #2/#3：`html.length > 0` / `text.length > 0` 连「空壳」都放行。
+  // 这里锁报告骨架：标题 + 每条鱼一张卡 + 底部声明；文本锁首行与末行统计。
+  assert.ok(html.startsWith('<!doctype html>'), 'HTML 缺 doctype');
+  assert.ok(html.includes('鱼况体检报告'), 'HTML 缺标题');
+  assert.equal(
+    html.split('<article class="card').length - 1,
+    report.fishes.length,
+    'HTML 的鱼卡数量必须等于报告里的鱼数（空壳/漏渲染都会红）',
+  );
+  assert.ok(html.includes('本报告只读、不联网、无遥测。'), 'HTML 缺底部只读声明');
+  const textLines = text.split('\n');
+  assert.ok(text.startsWith('🐟 pond-check'), '文本缺首行');
+  assert.match(
+    textLines.at(-1),
+    new RegExp(`^共 ${report.fishes.length} 条，活跃 \\d+ / 疲软 \\d+ / 死了 \\d+ / 认不出 \\d+。$`, 'u'),
+    `文本末行不是完整统计行：${textLines.at(-1)}`,
+  );
   assert.doesNotThrow(() => JSON.parse(json), '--json 输出必须能被 JSON.parse 回读');
   assert.equal(/(src|href)="https?:/.test(html), false, 'HTML 不许出现任何外链');
-  assert.equal(html.includes('本报告只读、不联网、无遥测。'), true, '底部只读声明必须一直在');
   assert.equal(/\x1b\[/.test(text), false, '文本摘要不许带 ANSI 颜色（贴到群里会变成乱码）');
 });

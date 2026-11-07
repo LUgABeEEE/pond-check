@@ -161,13 +161,26 @@ function makeHarness(overrides = {}) {
  * ------------------------------------------------------------------ */
 
 test('HTML：结构完整（doctype/viewport/卡片/六指标/底部声明）', () => {
-  const html = renderHtml(makeReport(['ok', 'bad']));
+  const report = makeReport(['ok', 'bad']);
+  const html = renderHtml(report);
   assert.ok(html.startsWith('<!doctype html>'), '缺 doctype');
   assert.ok(html.includes('name="viewport"'), '缺 viewport meta');
   assert.ok(html.includes('鱼况体检报告'), '缺标题');
-  // 两条鱼 × 六指标（数元素本身，别数 CSS 选择器）
-  assert.equal(html.split('<span class="chip-name">').length - 1, 12, '六指标小卡数量不对');
-  assert.equal(html.split('<article class="card').length - 1, 2, '鱼卡数量不对');
+  // D8c 弱断言 #8：光断言「标签/字符串出现过」证明不了渲染对得上报告。
+  // 数量一律从 report 推，且每条鱼的名字都必须真的出现在 HTML 里。
+  assert.equal(
+    html.split('<span class="chip-name">').length - 1,
+    report.fishes.length * 6,
+    '六指标小卡数量必须等于 鱼数 × 6',
+  );
+  assert.equal(
+    html.split('<article class="card').length - 1,
+    report.fishes.length,
+    '鱼卡数量必须等于报告里的鱼数',
+  );
+  for (const fish of report.fishes) {
+    assert.ok(html.includes(fish.name), `HTML 漏了这条鱼的名字：${fish.name}`);
+  }
   assert.ok(html.includes('本报告只读、不联网、无遥测。'), '缺底部声明');
 });
 

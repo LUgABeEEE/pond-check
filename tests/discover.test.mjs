@@ -55,8 +55,9 @@ test('unknown 降级：名字像鱼但缺关键文件 → 报 unknown + 人话�
   const [only] = fish;
   assert.equal(only.kind, 'unknown');
   assert.equal(only.reason, 'missing_dedupe');
-  assert.ok(only.evidence.reasonText.includes('判重表'), '人话要说清缺什么');
-  assert.ok(only.evidence.reasonText.length > 0);
+  assert.match(only.evidence.reasonText, /没找到判重表/u, '人话要说清缺什么');
+  assert.match(only.evidence.reasonText, /没法判断她到底干了多少活/u, '人话要说清后果（为什么判不出工作量）');
+  assert.doesNotMatch(only.evidence.reasonText, /\{[A-Za-z_]/u, '人话里不许留未替换的 {var}');
 });
 
 test('同一插件装在两个 profile：两条都保留，id 加 scope 区分开', () => {
@@ -70,11 +71,15 @@ test('同一插件装在两个 profile：两条都保留，id 加 scope 区分�
   assert.ok(fish.every((f) => f.kind === 'dsh-plugin'));
 });
 
-test('降级留痕：generic 一路超时 → dsh 结果照出，degraded 记原因', () => {
-  const fish = scan('normal', { timeoutMs: 1 });
+// 环境敏感点 #5（原 `timeoutMs: 1` 依赖「1 ms 内 worker 起不来」）：
+// timeoutMs=0 = 主线程不等待 worker，无论机器多快都走同一分支 → 确定性降级；
+// 不再靠调度运气，也不会在极快机器上翻转。
+test('降级留痕：generic 一路超时 → dsh 结果照出，degraded 记 timeout', () => {
+  const fish = scan('normal', { timeoutMs: 0 });
   assert.ok(fish.some((f) => f.kind === 'dsh-plugin'), 'dsh 一路不受 generic 降级影响');
   assert.ok(Array.isArray(fish.degraded));
-  assert.equal(fish.degraded.length, 1);
+  assert.equal(fish.degraded.length, 1, `只该有一条降级留痕：${JSON.stringify(fish.degraded)}`);
   assert.equal(fish.degraded[0].scope, 'generic');
-  assert.ok(typeof fish.degraded[0].reason === 'string');
+  // D8c 弱断言 #6：`typeof === 'string'` 连 "whatever" 都能过；锁死机器码。
+  assert.equal(fish.degraded[0].reason, 'timeout', `降级原因必须是 timeout：${fish.degraded[0].reason}`);
 });

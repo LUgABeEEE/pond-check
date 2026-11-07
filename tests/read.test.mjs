@@ -68,7 +68,11 @@ test('正常读取：日志 / 配置 / 判重表 / 会话目录全部拿到', as
     'sessions/s1.json': '{}',
   });
 
-  const result = await readPond({ id: 'dsh-home:normal', kind: 'dsh-home', rootPath: root }, { now });
+  const result = await readPond(
+    { id: 'dsh-home:normal', kind: 'dsh-home', rootPath: root },
+    // home 指到空临时目录：凭证新鲜度只 stat 白名单路径，这样结果与本机 $HOME 无关
+    { now, home: await makePond({}) },
+  );
 
   assert.equal(result.ok, true);
   assert.equal(result.id, 'dsh-home:normal');
@@ -86,7 +90,9 @@ test('正常读取：日志 / 配置 / 判重表 / 会话目录全部拿到', as
   assert.equal(result.log.ok, true);
   assert.equal(result.log.lines.at(-1).includes('412'), true);
   assert.equal(result.log.lastTimestamp.format, 'iso');
-  assert.ok(result.log.keywords.hardHits >= 1, '412 必须计入 hardHits');
+  // D8c 弱断言 #7：`hardHits >= 1` 分不清「命中一次」和「命中无数次」，
+  // 也测不出单点回归。夹具只有一行 412，精确锁 1。
+  assert.equal(result.log.keywords.hardHits, 1, '夹具只有一行 412，hardHits 必须恰好是 1');
 
   // 配置：版本号读到了，敏感键的值一个字都不能出现
   assert.equal(result.config.schemaVersion, 1);
@@ -103,11 +109,36 @@ test('正常读取：日志 / 配置 / 判重表 / 会话目录全部拿到', as
   // 依赖四件套存在（不判档位，只要求事实字段在）
   assert.equal(typeof result.deps, 'object');
   assert.equal(typeof result.deps.node.version, 'string');
-  assert.equal(result.credentials.foundCount >= 0, true);
+  // D8c 弱断言 #10：`foundCount >= 0` 连「本机没有凭证却谎报有」都能过。
+  // 家目录是空临时目录，白名单里的凭证一个都不存在 → 必须如实 0 + 说明原因。
+  assert.equal(result.credentials.foundCount, 0, '空家目录里不该凭空找到凭证');
+  assert.equal(result.credentials.reason, 'no_credentials_found', '找不到凭证要留机器码，不能沉默');
+  assert.equal(result.credentials.newestAgeSec, null, '没有凭证时不该编一个「最近更新」出来');
 
   assert.deepEqual(result.missing, []);
   assert.deepEqual(result.unreadable, []);
   assert.deepEqual(result.degraded, []);
+});
+
+// D8c 弱断言 #7 的补充：原夹具一行同时含 412 与 Precondition Failed，
+// 删掉任意一个关键词仍会通过。这里把数字边界单独钉死：
+//   - 独立 token 412 → 命中（风控）
+//   - 4121 / ?aid=412 → 绝不能命中（黏在数字/查询参数里的 412 不是状态码）
+test('关键词数字边界：独立 412 命中；4121 与 ?aid=412 不得误报风控', async () => {
+  const now = Date.now();
+  const root = await makePond({
+    'logs/duty.log': [
+      `${new Date(now - 180_000).toISOString()} ERROR HTTP 412 只有状态码的一行`,
+      `${new Date(now - 120_000).toISOString()} INFO sleep 4121ms 正常轮询`,
+      `${new Date(now - 60_000).toISOString()} GET /x/web-interface?aid=412 正常请求`,
+    ].join('\n') + '\n',
+  });
+  const result = await readPond({ rootPath: root, id: 'keyword-boundary' }, { now });
+
+  const risk = result.log.keywords.categories.find((category) => category.id === 'riskControl');
+  assert.equal(risk.count, 1, `只有独立 token 412 该命中，实际命中 ${risk.count} 行`);
+  assert.deepEqual(risk.matchedKeywords, ['412'], '命中的关键词必须恰好是 412 本身');
+  assert.equal(result.log.keywords.hardHits, 1, '误报会让 hardHits 变大，进而把健康判得更差');
 });
 
 test('超大日志：只读尾部预算字节，窗口外的旧错误不算进健康', async () => {
@@ -162,8 +193,12 @@ test('空文件：不崩，日志这一路老实降级为 unknown', async () => 
 });
 
 test('无权限（chmod 000）：读不到就报读不到，不当成正常', async (t) => {
-  if (typeof process.getuid === 'function' && process.getuid() === 0) {
-    t.skip('以 root 运行时 chmod 000 不生效，无法验证权限降级');
+  if (process.platform === 'win32' || (typeof process.getuid === 'function' && process.getuid() === 0)) {
+    // 环境敏感点 #1：写清为什么跳过、在什么环境会跑（root 下 skip 不是静默）
+    const reason = 'chmod 000 只对非 root 的 POSIX 用户生效（root 无视权限位，Windows 没有 POSIX 权限位），'
+      + '无法制造「读不到」；权限降级用例在「非 root 的 Linux/macOS」上执行';
+    t.diagnostic(reason);
+    t.skip(reason);
     return;
   }
   const now = Date.now();
@@ -190,8 +225,11 @@ test('无权限（chmod 000）：读不到就报读不到，不当成正常', as
 });
 
 test('deps.homeWritable 按每条鱼自己的窝判，不是拿 $HOME 顶替', async (t) => {
-  if (typeof process.getuid === 'function' && process.getuid() === 0) {
-    t.skip('以 root 运行时目录权限不生效，无法验证可写性探测');
+  if (process.platform === 'win32' || (typeof process.getuid === 'function' && process.getuid() === 0)) {
+    const reason = '目录写权限只对非 root 的 POSIX 用户生效（root 无视权限位，Windows 没有 POSIX 权限位），'
+      + '无法制造「不可写」；homeWritable 用例在「非 root 的 Linux/macOS」上执行';
+    t.diagnostic(reason);
+    t.skip(reason);
     return;
   }
   const now = Date.now();

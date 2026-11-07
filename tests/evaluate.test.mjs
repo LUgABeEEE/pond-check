@@ -10,6 +10,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import os from 'node:os';
 
 import { evaluate, evaluateFish, INDICATOR_IDS, BAND_LABELS } from '../src/evaluate/index.mjs';
@@ -17,6 +18,13 @@ import { getRules as getSystemRules } from '../src/evaluate/system.mjs';
 import { SENSITIVE_PATH_TOKEN } from '../src/discover/generic.mjs';
 
 const RULES = getSystemRules();
+
+/**
+ * rules.json 的原始默认值（D8-L10）：
+ * 期望值必须从阈值唯一来源读，不能把 3600 这类当前值抄进测试 ——
+ * SPEC §9 允许「改阈值只改 rules.json」，抄进测试就会在合法改阈值时误报红。
+ */
+const RULES_JSON = JSON.parse(fs.readFileSync(new URL('../src/rules.json', import.meta.url), 'utf8'));
 
 const NOW = Date.UTC(2026, 10, 7, 12, 0, 0); // 2026-11-07T12:00:00Z
 const SEC = 1000;
@@ -176,6 +184,11 @@ function assertIndicatorContract(indicator, id) {
   assert.ok(indicator.phenomenon.length > 0, `${id}: phenomenon 不能空`);
   assert.equal(typeof indicator.nextStep, 'string');
   assert.ok(indicator.nextStep.length > 0, `${id}: nextStep 不能空`);
+  // 人话必须真的像人话（D8c 弱断言 #9）：只有长度 > 0 时，空白串 / "x" / 纯机器 id 都能过。
+  assert.match(indicator.phenomenon, /[\p{Script=Han}]/u, `${id}: phenomenon 不含中文，可能退化成机器词：${indicator.phenomenon}`);
+  assert.match(indicator.nextStep, /[\p{Script=Han}]/u, `${id}: nextStep 不含中文，可能退化成机器词：${indicator.nextStep}`);
+  assert.match(indicator.phenomenon, /\S/u, `${id}: phenomenon 不能是空白串`);
+  assert.match(indicator.nextStep, /\S/u, `${id}: nextStep 不能是空白串`);
   assert.ok(!/\{[A-Za-z_]/.test(indicator.phenomenon), `${id}: phenomenon 有未替换 {var}: ${indicator.phenomenon}`);
   assert.ok(!/\{[A-Za-z_]/.test(indicator.nextStep), `${id}: nextStep 有未替换 {var}: ${indicator.nextStep}`);
   assert.ok(Array.isArray(indicator.evidence.missing), `${id}: evidence.missing 必须是数组`);
@@ -256,7 +269,13 @@ test('S04 空窝（没有日志/判重表/配置）：六格全 unknown，绝不
   assert.deepEqual(report.summary, { fish: 1, ok: 0, watch: 0, bad: 0, unknown: 6 });
   assert.match(report.verdict, /1 条鱼 · 六格口径：0 正常 · 0 要注意 · 0 坏了 · 6 判不出/);
   assert.match(report.verdict, /这些项不是正常，是没看到。/);
-  assert.ok(report.footnote);
+  // D8c 弱断言 #1：只断言「有脚注」时，永远输出 "x" 的实现也能过。
+  // 脚注必须把「几项、哪几格、为什么不能当正常」都说清，而且用中文格名而不是机器 id。
+  assert.match(report.footnote, /^6 项数据读不到（.+），不能当正常。$/u, `脚注内容不对：${report.footnote}`);
+  for (const id of INDICATOR_IDS) {
+    assert.ok(report.footnote.includes(RULES.indicators[id].nameZh), `脚注漏了 ${RULES.indicators[id].nameZh} 这一格`);
+  }
+  assert.doesNotMatch(report.footnote, /liveness|rhythm|throughput|health|deps|drift/u, `脚注直接吐了机器 id：${report.footnote}`);
   assert.equal(report.degradedCount, 6);
 });
 
@@ -461,8 +480,12 @@ test('S15 阈值真的来自 rules.json：注入 activeMaxSec=60 后 120 秒前�
   // 基线（默认 rules）同一份输入是 active
   const base = evaluateFish(read, { now: NOW, fieldPresence: {} });
   assert.equal(base.indicators.liveness.level, 'active');
-  // 用完必须把 system.mjs 的全局 rules 还原，别污染同进程后面的调用
-  assert.equal(getSystemRules().indicators.liveness.thresholds.constants.activeMaxSec, 3600);
+  // 用完必须把 system.mjs 的全局 rules 还原，别污染同进程后面的调用。
+  // 期望值读 rules.json，不写死 3600（D8-L10）：否则合法改阈值会把测试误报红。
+  assert.equal(
+    getSystemRules().indicators.liveness.thresholds.constants.activeMaxSec,
+    RULES_JSON.indicators.liveness.thresholds.constants.activeMaxSec,
+  );
 });
 
 test('S16 显示名：带 profile scope 区分同包多份安装，$HOME 缩成 ~', () => {
