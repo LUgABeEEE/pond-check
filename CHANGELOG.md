@@ -9,6 +9,46 @@
 
 暂无变更。
 
+## [0.1.1] - 2026-11-07
+
+清掉 D8 审查（`docs/AUDIT-SUMMARY.md` §2）遗留的 6 条 medium + 8 条 low，共 14 条。
+每条都补了回归测试并做变异验证（把修复改回旧逻辑，对应用例必须红）；全量 167 tests 全绿。
+
+### Fixed
+
+- **D8-M2** `--out` 静默覆盖 / 符号链接顺链写：新增 `checkWriteTarget` 写盘安全闸（扫描前执行）——
+  目标已存在默认拒绝（stderr 说明「加 `--force` 覆盖或换个路径」，exit 1）；`--force` 只放行覆盖普通文件；
+  目标是符号链接时连 `--force` 也不写穿；父目录不存在仍递归创建、父目录是文件则明确报错；`--help` 注明 `--force` 语义。
+- **D8-M4** 分桶 `bad` 同页两个词：四灯 / 统计行与 summary 统一「坏了」，「死了」只留 `liveness=dead` 档位名；
+  deps broken + liveness active 的鱼全文不再出现「死了」。
+- **D8-M5** 分桶 `ok` 门槛过低：抬到「已知格 ≥2 且 liveness 已知」（已知格与 summary 六格同尺），达不到落 `unknown`；
+  统计行 / HTML 追加「多格判不出的鱼 N 条（活跃不代表六格全绿）」。
+- **D8-M6** Windows「明确报 unsupported」未实现：`platform` 可注入，win32 在解析后、扫描前早退 ——
+  stderr 明确「v0.1 不支持 Windows」、exit 1、不扫描 / 不渲染 / 不写盘。
+- **D8-M9** 逃生口（`--root` / `--log` / `--dedupe` 指到不存在路径）无用例锁：新增 `tests/cli-paths.test.mjs`
+  4 条真 CLI 子进程用例 —— stderr 有对应提醒且带路径、exit 0、报告仍产出、那条鱼六格全 unknown。
+- **D8-M10** SPEC「不写用户目录」与默认往 cwd 写报告的措辞冲突：SPEC §2.1 补「写盘边界说全」段 ——
+  唯一写盘 = 一份 HTML 报告、默认写 cwd（`pond-check-<YYYYMMDD-HHMMSS>.html`）、`--out` 可指定
+  （默认拒覆盖 / `--force` 才覆盖 / 符号链接不写穿）、绝不写进鱼的窝。
+- **D8-L1** `POND_CHECK_RULES` / `rulesPath` 让 `loadRules()` 读任意路径无名字闸：`customPath` 先过敏感名闸
+  （文件名或任意一段目录命中凭证 / 证书模式即拒绝，返回 `null`），正常 `rules.json` 不误伤；
+  新增 `tests/rules-path.test.mjs` 5 条正反用例。（收口阶段补派修复）
+- **D8-L2** `config.json` 内存口径：SPEC 新增 §2.6 —— 整份读进内存再解析（32 MiB 防呆上限）、
+  敏感键只跳输出（`[已隐藏]`），标注属设计内并引用 `tests/boundary.test.mjs` 的 5 哨兵零泄漏回归。
+- **D8-L3** `skipDirPatterns` 未覆盖 `*cred*` / `*cert*`：保守补目录模式（`*cred*` / `*creds*` / `*cert*` 等），
+  `minasCred` / `minasCert` 不再被 readdir 列名，`credits` / `certified` / `secretary` 不误杀。
+- **D8-L4** 默认模式在 cwd 累积报告文件：README / SPEC 补累积提示与清理建议（`rm pond-check-*.html`，
+  `.gitignore` 已忽略该模式），或用 `--out` 固定输出位置。
+- **D8-L5** `windowStale` 的 nextStep 是拼接（会出现「不用动。先看『存活』那栏…」自相矛盾）：改为**替换** ——
+  窗口过期时输出「先看『存活』…」专用文案；窗口未过期仍用 `diagnosis.clean` 原话术。
+- **D8-L6** 数字关键词边界不排字母（`BV412` / `?aid=412` 被算成风控，假报警方向）：关键词改为独立 token 边界匹配
+  （前后不得紧邻字母 / 数字 / 下划线，也不得紧邻 `.` `=` `@` `/` `\` `-`）；`BV412`、`sleep 4121ms`、`1.412.0` 不再误报，
+  真 412 / 429 / 401 / 403 与中文紧邻「返回412」仍命中。
+- **D8-L9** `docs/CAPABILITIES-SPEC.md` 是零实现的设计稿易被读成「已支持」：顶部加 ⚠️「未实现的设计稿」标注
+  （v0.1 不含其中任何能力，是第二期设计基线），README 开发节加带同样标注的指针。
+- **D8-L10** 测试债务：10 条弱断言逐条强化（脚注 / HTML 骨架 / 六格键集合 / reasonText / hardHits 等）；
+  evaluate S15 阈值期望改读 `src/rules.json`（删硬编码 3600）；5 项环境敏感点留痕（skip 原因 + 诊断）。
+
 ## [0.1.0] - 2026-11-07
 
 ### Added
