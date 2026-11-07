@@ -243,8 +243,7 @@ test('日志为空且写入痕迹很旧：存活不得说成「活跃」（空�
 });
 
 test(
-  '【缺陷 B2】日志为空（刚被 touch，mtime 是新的）：liveness 应为 unknown，而不是「她不到 1 分钟前还在动」',
-  { skip: '已知口径冲突：life.mjs 把日志 mtime 当活动痕迹（0 字节也算写过），当前判 active；待队长裁定是改实现还是改 SPEC §4.1' },
+  '【缺陷 B2 已修】日志为空（刚被 touch，mtime 是新的）：liveness 必须 unknown，不能说「她不到 1 分钟前还在动」',
   async () => {
     const root = makePond('empty-fresh', { 'app.log': '' });
     const { fish } = await inspect(root);
@@ -380,8 +379,7 @@ test('二进制日志（含 NUL）：不崩，hasBinary 如实标注，证据进
 });
 
 test(
-  '【缺陷 B1】二进制日志：健康不得被判成「干净」，总评不得把它算进「正常」',
-  { skip: '已知缺陷：D3 已标 degraded(health,binary_content)，但 evaluate 的 readDegradedForUnknown 只保留 unknown 指标的 degraded，于是这条证据被吞掉，health 仍按关键词 0 命中判 clean' },
+  '【缺陷 B1 已修】二进制日志：健康不得被判成「干净」，总评不得把它算进「正常」',
   async () => {
     const root = makePond('binary-log-health');
     fs.writeFileSync(

@@ -619,13 +619,18 @@ function collectLivenessSources(read, nowMs, constants, processState) {
   };
 
   // ── 源 1：日志文件写入时间 ────────────────────────────────────────
-  // 注意：即使日志内容读不出来（empty / eacces），只要文件真的被写过，mtime 就是
-  // 真实活动痕迹 —— 这不算「用假信号救场」，mtime 是文件系统事实。
-  // 唯一例外：凭证类文件被凭证闸挡下时，连 mtime 都不许用（不能借 mtime 泄露存在性）。
+  // 注意：日志内容读不出来（eacces）但文件确实被写过，mtime 仍是真实的文件系统事实。
+  //
+  // 但 0 字节日志例外（队长裁定 B2）：文件被 touch / 被轮转截断，也会让 mtime 变新，
+  // 这证明「文件被动过」，不证明「她刚干了活」。仅凭一个空日志就宣布
+  // 「她不到 1 分钟前还在动」是假健康 —— 这种场景必须落到 unknown。
+  // 若 session / 判重表另有新鲜痕迹，第 2、3 源仍然会把 liveness 抬起来，不受影响。
+  // 另一例外：凭证类文件被凭证闸挡下时，连 mtime 都不许用（不能借 mtime 泄露存在性）。
   const log = read?.log && typeof read.log === 'object' ? read.log : null;
-  consider('log_mtime', log ? log.mtimeMs : null, {
+  const logHasContent = !!log && log.reason !== 'empty' && !(isFiniteNumber(log.size) && log.size === 0);
+  consider('log_mtime', logHasContent ? log.mtimeMs : null, {
     skippedSensitive: log?.reason === 'sensitive_skipped',
-    note: log ? undefined : 'no_log_located',
+    note: !log ? 'no_log_located' : (logHasContent ? undefined : 'log_empty_no_content'),
   });
 
   // ── 源 2：session 记录最近一次写入 ───────────────────────────────

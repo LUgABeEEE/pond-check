@@ -371,6 +371,24 @@ export function evaluateHealth(pondData = {}, options = {}) {
     });
   }
 
+  // 5.1b 二进制内容 → unknown（假健康禁令，队长裁定 B1）
+  //
+  // 二进制日志里不可能有可解析的关键词，「0 命中」绝不等于「干净」。
+  // D3 已经在 degraded 里标了 (health, binary_content)；如果这里按关键词 0 命中
+  // 判 clean，报告会写「健康 干净」并把它算进「正常」—— 这是本项目最不能犯的错。
+  if (log.hasBinary === true) {
+    return unknownIndicator(spec, {
+      reason: 'binary_content',
+      evidence: {
+        source: sourceSummary(logSource),
+        windowHours: constants.windowHours ?? null,
+        bytesRead: isFiniteNumber(log.bytesRead) ? log.bytesRead : null,
+        hasBinary: true,
+      },
+      missing: ['log'],
+    });
+  }
+
   // 5.2 日志尾部没有可用行 → unknown（「日志尾部无可读行」）
   const lineCount = isFiniteNumber(log.lineCount)
     ? log.lineCount
