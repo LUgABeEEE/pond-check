@@ -445,7 +445,7 @@ P4  报「没找到鱼」     一行结论 + 一行「你现在该做什么」�
 
 | 优先级 | 条件 | 桶 |
 | --- | --- | --- |
-| 1 | 任一格 `severity=bad` | 死了（`bad`） |
+| 1 | 任一格 `severity=bad` | 坏了（`bad`）—— 「死了」只用于 `liveness=dead` 这一类，不用于分桶 |
 | 2 | 任一格 `severity=watch` | 疲软（`watch`） |
 | 3 | **关键两格**（`liveness` + `throughput`）都 `unknown` | 认不出（`unknown`） |
 | 4 | 其余 | 活跃（`ok`） |
