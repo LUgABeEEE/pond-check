@@ -6,6 +6,15 @@
   "bin": {
     "pond-check": "src/cli.mjs"
   },
+  "exports": {
+    ".": "./src/cli.mjs",
+    "./shared": "./src/shared/index.mjs",
+    "./memory": "./src/memory/index.mjs",
+    "./wake": "./src/wake/index.mjs",
+    "./tts": "./src/tts/index.mjs",
+    "./image": "./src/image/index.mjs",
+    "./package.json": "./package.json"
+  },
   "files": [
     "src",
     "docs",

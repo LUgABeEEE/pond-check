@@ -145,13 +145,49 @@ chmod +x ~/.local/bin/pond-check
 | 判重表是空的 | 工作量 + 依赖 | 先补依赖（ffmpeg、登录态、模型线路），再手动触发一次，看第一条能不能写进去 |
 | 同一条鱼出了两张卡 | —— | 用 `--fish <名字>` 只看一条；同一个窝里跑多个实例是正常的 |
 
+## 能力层（可选，体检不需要）
+
+> **诊断功能不依赖能力层。** `pond-check` 默认那条只读体检不需要任何配置、不联网、无状态；
+> 能力层是同一个包里额外提供的「养鱼」能力，用不用都不影响体检。整目录删掉 `~/.pond`
+> 就回到初始状态。
+
+能力层与诊断层在代码层**严格隔离**（`tests/isolation.test.mjs` 守）：诊断层不 import 能力层、
+不联网、不写盘；两层唯一接缝是 `~/.pond/events.jsonl`（能力层写、诊断层只读文件）。
+`package.json` 的 `exports` 暴露五个子入口：
+
+| 入口 | 能力 | 说明 |
+|---|---|---|
+| `import { createMemory } from 'pond-check/memory'` | 长期记忆 | `node:sqlite` 存储（零依赖）；三闸沉淀 + 四因子召回，每条带 `why` 分项解释 |
+| `import { createWake } from 'pond-check/wake'` | 加权唤醒 | `importance² × recency × silence`；默认 3 次/天、4 小时间隔、同 kind 2 次/天 |
+| `import { createTts } from 'pond-check/tts'` | 语音 | `edge`（免费）→ `command`（本地）→ `doubao` → `mimo` 降级链；长文本自动分段 |
+| `import { createImageClient } from 'pond-check/image'` | 出图 | `comfyui`（本地）→ `openai-compat` → `seedream` → `doubao`；本地不可达静默降级并标 `degradedFrom` |
+| `import { createRegistry, invoke } from 'pond-check/shared'` | 基座 | provider 注册表、超时/重试/降级、事件流、成本记账 |
+
+状态都在 `~/.pond/`（`POND_HOME` 可覆盖）：`events.jsonl`（append-only 记账）、
+`memory.db`（本地记忆库）、`image.json`（可选：工作流 / 端点 / 链序）、`out/`（出图默认落点）。
+**记忆默认本地、永不上传**：没有同步、没有云备份、没有遥测；要带走就用 `memory.export()` 导出 JSONL。
+
+> ⚠️ **云 adapter 未对真实服务验证。** `doubao` / `seedream` / `mimo` 是按公开文档离线对齐的协议实现，
+> 零联网铁律下**没有对真实服务跑过**；endpoint、字段名、错误码都可能对不上。首次使用请先冒烟
+> 一条最小请求（一句短语音 / 一张最小图），确认能通再批量用。本地路径（`edge` / `command` / `comfyui`）
+> 不受影响。详见 `docs/CAPABILITIES-SPEC.md` §9.5。
+
+云 adapter 需要环境变量（没配就自动跳过，不影响本地路径）：
+`POND_DOUBAO_TTS_APP_ID` + `POND_DOUBAO_TTS_TOKEN`、`POND_MIMO_API_KEY`、
+`POND_IMAGE_API_KEY`、`POND_SEEDREAM_API_KEY`、`POND_DOUBAO_API_KEY`。
+
+零运行时依赖仍然成立：存储用 Node 22 内置 `node:sqlite`，网络用内置 `fetch` / `WebSocket`，
+本地 CLI 用 `child_process` 调用户自己装好的程序。`node:sqlite` 目前仍标 experimental，
+打开记忆库会有一行 stderr 警告，功能不受影响。签名与差异说明见
+`docs/CAPABILITIES-SPEC.md` §9。
+
 ## 开发
 
 - **Node >= 22**（package.json 的 engines 已声明），**零运行时依赖、零构建步骤**——改完直接跑。
 - 测试：`npm test`（内部就是 `node --test`，零依赖，不联网）。
 - 代码走向：`src/discover`（发现鱼）→ `src/read`（读窝里的日志/配置/判重表）→ `src/evaluate`（六指标判定，阈值全部在 `src/rules.json`）→ `src/render`（HTML / 文本 / JSON 三种输出）→ `src/cli.mjs`（入口）。
 - 规格与设计在 `docs/SPEC.md`；首次使用走查记录在 `docs/FIELD-NOTES.md`。
-- 能力层（记忆 / 唤醒 / 语音 / 出图）的设计稿在 `docs/CAPABILITIES-SPEC.md` —— **未实现的设计稿，v0.1 不含这些能力**：那是第二期的设计基线，不是功能清单，别照着它敲命令。
+- 能力层的规格、导出签名与「实际实现 vs 设计稿」差异在 `docs/CAPABILITIES-SPEC.md`（已实现）；云 adapter 的验证状态见该文档 §9.5。
 
 ## 许可
 
