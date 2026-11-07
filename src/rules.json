@@ -4,60 +4,154 @@
   "project": "pond-check",
   "description": "鱼况体检的机器可读判定契约。所有阈值从这里读，实现里不许硬编码。配合 docs/SPEC.md 使用；两者冲突时以本文件为执行真相，并在同一次提交里修正 SPEC.md。",
   "updatedAt": "2026-11-07",
-
   "policy": {
     "neverDefaultToOk": true,
     "unknownIsNotOk": true,
     "note": "数据不足时必须输出 unknown 并列出 missing；不许 fallback 成上一个档位或 ok。假健康是本项目最高优先级缺陷。",
     "readOnly": true,
     "offline": true,
-    "noNetworkModules": ["node:http", "node:https", "node:net", "node:dns", "node:tls"],
-    "forbiddenExec": ["sh", "bash", "zsh", "cmd", "powershell"]
+    "noNetworkModules": [
+      "node:http",
+      "node:https",
+      "node:net",
+      "node:dns",
+      "node:tls"
+    ],
+    "forbiddenExec": [
+      "sh",
+      "bash",
+      "zsh",
+      "cmd",
+      "powershell"
+    ]
   },
-
   "severity": {
-    "values": ["ok", "watch", "bad", "unknown"],
-    "rank": { "ok": 0, "watch": 1, "bad": 2, "unknown": 3 },
+    "values": [
+      "ok",
+      "watch",
+      "bad",
+      "unknown"
+    ],
+    "rank": {
+      "ok": 0,
+      "watch": 1,
+      "bad": 2,
+      "unknown": 3
+    },
     "note": "rank 只用于排序（坏的排上面）；unknown 的 rank 最高是为了不被折叠成正常，不表示它比 bad 更严重。"
   },
-
   "rollup": {
-    "summaryFields": ["fish", "ok", "watch", "bad", "unknown"],
-    "fishOrder": ["bad", "unknown", "watch", "ok"],
+    "summaryFields": [
+      "fish",
+      "ok",
+      "watch",
+      "bad",
+      "unknown"
+    ],
+    "fishOrder": [
+      "bad",
+      "unknown",
+      "watch",
+      "ok"
+    ],
     "unknownNoteTemplate": "{unknown} 项判不出来 —— 这些不是正常，是没看到。",
     "missingFishTemplate": "没扫到任何在跑的鱼。先确认她真的在跑（ps aux | grep -i <她的名字>），再用 --root <她的目录> 指定她的窝。",
     "degradedFootnoteTemplate": "{count} 项数据读不到（{indicators}），这些项目不能当作正常。",
     "maxFixesPerFish": 3
   },
-
   "credentials": {
     "note": "命中即跳过：不 open、不 stat 内容、不读 mtime；路径在进入任何数据结构之前替换为 sensitivePathToken。报告里只允许出现聚合数量，绝不出现文件名或路径。唯一例外是 deps.credentialFreshness 按 knownCredentialPaths 白名单只取 mtime 天数，且永不返回路径。",
     "sensitivePathToken": "[凭证文件已跳过]",
     "skipFilePatterns": [
-      "*credential*", "*credentials*", "*cred*",
-      "*secret*", "*secrets*", "secrets.*",
-      ".env", ".env.*", "*.env", "*.env.*", "env.local", "env.*.local",
-      "*cookie*", "cookie*.txt", "*cookies.json",
-      "*session*", "*.session", "*session.token", "*_session.json",
-      "*token*", "*.token", "*tokens*",
-      "*auth*", "auth.json", "*.auth", "*oauth*", "*oauth2*", "*bearer*",
-      "*password*", "*passwd*", "*pwd.json",
-      ".netrc", ".htpasswd", ".npmrc", ".pypirc", ".git-credentials",
-      "*.pem", "*.key", "*.p8", "*.p12", "*.pfx", "*.jks", "*.keystore",
-      "id_rsa*", "id_ed25519*", "id_ecdsa*", "id_dsa*", "*.ppk",
-      "authorized_keys", "known_hosts",
-      "*.kdbx", "*keychain*", "*keyring*",
-      "*onebot11*", "*account*.json", "*login*.json",
-      "*service-account*.json", "*terraform.tfstate*"
+      "*credential*",
+      "*credentials*",
+      "*cred*",
+      "*secret*",
+      "*secrets*",
+      "secrets.*",
+      ".env",
+      ".env.*",
+      "*.env",
+      "*.env.*",
+      "env.local",
+      "env.*.local",
+      "*cookie*",
+      "cookie*.txt",
+      "*cookies.json",
+      "*session*",
+      "*.session",
+      "*session.token",
+      "*_session.json",
+      "*token*",
+      "*.token",
+      "*tokens*",
+      "*auth*",
+      "auth.json",
+      "*.auth",
+      "*oauth*",
+      "*oauth2*",
+      "*bearer*",
+      "*password*",
+      "*passwd*",
+      "*pwd.json",
+      ".netrc",
+      ".htpasswd",
+      ".npmrc",
+      ".pypirc",
+      ".git-credentials",
+      "*.pem",
+      "*.key",
+      "*.p8",
+      "*.p12",
+      "*.pfx",
+      "*.jks",
+      "*.keystore",
+      "id_rsa*",
+      "id_ed25519*",
+      "id_ecdsa*",
+      "id_dsa*",
+      "*.ppk",
+      "authorized_keys",
+      "known_hosts",
+      "*.kdbx",
+      "*keychain*",
+      "*keyring*",
+      "*onebot11*",
+      "*account*.json",
+      "*login*.json",
+      "*service-account*.json",
+      "*terraform.tfstate*"
     ],
     "skipDirPatterns": [
-      ".ssh", ".gnupg", ".git", ".aws", ".docker", ".password-store",
-      ".pki", ".config/gcloud", ".config/gh", "keyrings",
-      ".local/share/keyrings", "node_modules", ".cache"
+      ".ssh",
+      ".gnupg",
+      ".git",
+      ".aws",
+      ".docker",
+      ".password-store",
+      "secrets",
+      ".pki",
+      ".npm",
+      ".config/gcloud",
+      ".config/gh",
+      "keyrings",
+      ".local/share/keyrings",
+      "node_modules",
+      ".cache"
     ],
     "valueRedactionKeys": [
-      "apikey", "api_key", "secret", "token", "password", "passwd",
-      "cookie", "authorization", "bearer", "credential", "private_key", "access_key"
+      "apikey",
+      "api_key",
+      "secret",
+      "token",
+      "password",
+      "passwd",
+      "cookie",
+      "authorization",
+      "bearer",
+      "credential",
+      "private_key",
+      "access_key"
     ],
     "redactedValueToken": "[已隐藏]",
     "knownCredentialPaths": {
@@ -71,11 +165,19 @@
       ]
     },
     "reportOnly": {
-      "allowed": ["聚合数量", "sensitivePathToken", "redactedValueToken"],
-      "forbidden": ["文件路径", "文件名", "目录名", "mtime 对应到具体文件"]
+      "allowed": [
+        "聚合数量",
+        "sensitivePathToken",
+        "redactedValueToken"
+      ],
+      "forbidden": [
+        "文件路径",
+        "文件名",
+        "目录名",
+        "mtime 对应到具体文件"
+      ]
     }
   },
-
   "budget": {
     "tailBytes": 262144,
     "tailLines": 500,
@@ -85,50 +187,156 @@
     "scanTimeoutMs": 15000,
     "execTimeoutMs": 1000
   },
-
   "discovery": {
     "note": "先发现鱼再读窝；P1 与 P2 的结果必须合并而不是二选一（黑盒鱼 / 有窝没鱼都是真实现象）。",
-    "dedupeKey": ["kind", "realpath", "port"],
+    "dedupeKey": [
+      "kind",
+      "realpath",
+      "port"
+    ],
     "probeOrder": [
-      { "id": "P0", "rule": "cliExplicit", "params": ["--root", "--fish", "--log", "--dedupe"], "fallbackTo": "P1" },
-      { "id": "P1", "rule": "processTable", "linux": ["/proc/<pid>/cmdline", "/proc/<pid>/cwd", "/proc/<pid>/exe", "/proc/<pid>/stat"], "darwin": "ps -eo pid,ppid,lstart,command", "win32": "unsupported", "fallbackTo": "P2" },
-      { "id": "P2", "rule": "knownStateRoots", "maxDepth": 2, "fallbackTo": "P3" },
-      { "id": "P3", "rule": "homeShallowScan", "root": "~", "maxDepth": 2, "fallbackTo": "P4" },
-      { "id": "P4", "rule": "noFishFound", "behaviour": "输出一行结论 + 一行下一步（不许空报告，也不许堆 unknown）" }
+      {
+        "id": "P0",
+        "rule": "cliExplicit",
+        "params": [
+          "--root",
+          "--fish",
+          "--log",
+          "--dedupe"
+        ],
+        "fallbackTo": "P1"
+      },
+      {
+        "id": "P1",
+        "rule": "processTable",
+        "linux": [
+          "/proc/<pid>/cmdline",
+          "/proc/<pid>/cwd",
+          "/proc/<pid>/exe",
+          "/proc/<pid>/stat"
+        ],
+        "darwin": "ps -eo pid,ppid,lstart,command",
+        "win32": "unsupported",
+        "fallbackTo": "P2"
+      },
+      {
+        "id": "P2",
+        "rule": "knownStateRoots",
+        "maxDepth": 2,
+        "fallbackTo": "P3"
+      },
+      {
+        "id": "P3",
+        "rule": "homeShallowScan",
+        "root": "~",
+        "maxDepth": 2,
+        "fallbackTo": "P4"
+      },
+      {
+        "id": "P4",
+        "rule": "noFishFound",
+        "behaviour": "输出一行结论 + 一行下一步（不许空报告，也不许堆 unknown）"
+      }
     ],
     "allowExec": [
-      { "cmd": "ps", "args": ["-eo", "pid,ppid,lstart,command"], "purpose": "darwin 进程表", "timeoutMs": 2000 },
-      { "cmd": "ffmpeg", "args": ["-version"], "purpose": "取版本号", "timeoutMs": 1000, "disableWith": "--no-exec" },
-      { "cmd": "node", "args": ["--version"], "purpose": "取版本号", "timeoutMs": 1000, "disableWith": "--no-exec" },
-      { "cmd": "<pid exe>", "args": ["--version"], "purpose": "取鱼的运行时版本", "timeoutMs": 1000, "disableWith": "--no-exec" }
+      {
+        "cmd": "ps",
+        "args": [
+          "-eo",
+          "pid,ppid,lstart,command"
+        ],
+        "purpose": "darwin 进程表",
+        "timeoutMs": 2000
+      },
+      {
+        "cmd": "ffmpeg",
+        "args": [
+          "-version"
+        ],
+        "purpose": "取版本号",
+        "timeoutMs": 1000,
+        "disableWith": "--no-exec"
+      },
+      {
+        "cmd": "node",
+        "args": [
+          "--version"
+        ],
+        "purpose": "取版本号",
+        "timeoutMs": 1000,
+        "disableWith": "--no-exec"
+      },
+      {
+        "cmd": "<pid exe>",
+        "args": [
+          "--version"
+        ],
+        "purpose": "取鱼的运行时版本",
+        "timeoutMs": 1000,
+        "disableWith": "--no-exec"
+      }
     ],
     "kinds": [
       {
         "id": "dsh",
         "nameZh": "DSH 插件",
-        "fingerprintAny": ["dsh", ".dsh", "opencode-go", "xiaomimimo"],
-        "stateCandidates": ["~/.dsh", "~/.config/dsh", "~/.local/share/dsh"],
+        "fingerprintAny": [
+          "dsh",
+          ".dsh",
+          "opencode-go",
+          "xiaomimimo"
+        ],
+        "stateCandidates": [
+          "~/.dsh",
+          "~/.config/dsh",
+          "~/.local/share/dsh"
+        ],
         "startHint": "在你的 DSH 里启动对应插件"
       },
       {
         "id": "astrbot",
         "nameZh": "AstrBot",
-        "fingerprintAny": ["astrbot", "astrbot-main"],
-        "stateCandidates": ["~/.config/astrbot", "~/astrbot", "~/AstrBot", "~/.local/share/astrbot"],
+        "fingerprintAny": [
+          "astrbot",
+          "astrbot-main"
+        ],
+        "stateCandidates": [
+          "~/.config/astrbot",
+          "~/astrbot",
+          "~/AstrBot",
+          "~/.local/share/astrbot"
+        ],
         "startHint": "进 AstrBot 目录跑 python main.py（或用它的启动脚本）"
       },
       {
         "id": "napcat",
         "nameZh": "NapCat",
-        "fingerprintAny": ["napcat", "onebot", "llonebot"],
-        "stateCandidates": ["~/.config/napcat", "~/napcat", "~/.local/share/napcat"],
+        "fingerprintAny": [
+          "napcat",
+          "onebot",
+          "llonebot"
+        ],
+        "stateCandidates": [
+          "~/.config/napcat",
+          "~/napcat",
+          "~/.local/share/napcat"
+        ],
         "startHint": "启动 NapCat 并按配置连上 OneBot 反向 WS"
       },
       {
         "id": "desktop-pet",
         "nameZh": "桌面宠物",
-        "fingerprintAny": ["desktop-pet", "vpet", "live2d", "pet"],
-        "stateCandidates": ["~/.config/vpet", "~/.config/desktop-pet", "~/.local/share/desktop-pet"],
+        "fingerprintAny": [
+          "desktop-pet",
+          "vpet",
+          "live2d",
+          "pet"
+        ],
+        "stateCandidates": [
+          "~/.config/vpet",
+          "~/.config/desktop-pet",
+          "~/.local/share/desktop-pet"
+        ],
         "startHint": "重新打开桌面宠物程序"
       },
       {
@@ -141,19 +349,42 @@
       }
     ]
   },
-
   "indicators": {
     "liveness": {
       "id": "liveness",
       "nameZh": "存活",
       "question": "这条鱼最后一次真的动过是什么时候？",
       "unit": "sec",
-      "forbiddenSignals": ["online", "isOnline", "connected", "status", "state", "alive", "heartbeat", "lastPing", "readyState", "lastSeenOnline"],
+      "forbiddenSignals": [
+        "online",
+        "isOnline",
+        "connected",
+        "status",
+        "state",
+        "alive",
+        "heartbeat",
+        "lastPing",
+        "readyState",
+        "lastSeenOnline"
+      ],
       "forbiddenReason": "僵尸进程、假心跳、断线未重连的 bot 都能把 online 报成正常。只有真实写入痕迹算数。",
-      "sources": ["log_mtime", "session_mtime", "dedupe_mtime", "process_start"],
-      "sourceOrder": ["log_mtime", "session_mtime", "dedupe_mtime", "process_start"],
+      "sources": [
+        "log_mtime",
+        "session_mtime",
+        "dedupe_mtime",
+        "process_start"
+      ],
+      "sourceOrder": [
+        "log_mtime",
+        "session_mtime",
+        "dedupe_mtime",
+        "process_start"
+      ],
       "aggregation": "max",
-      "excludedSources": ["config_mtime", "dir_mtime"],
+      "excludedSources": [
+        "config_mtime",
+        "dir_mtime"
+      ],
       "excludedReason": "改配置不等于干活；目录 mtime 可能只是有人 cd 进去过。",
       "thresholds": {
         "metric": "ageSec",
@@ -164,10 +395,46 @@
           "futureSkewToleranceSec": 120
         },
         "bands": [
-          { "level": "active", "allOf": [{ "metric": "ageSec", "op": "lt", "valueRef": "activeMaxSec" }] },
-          { "level": "slack", "allOf": [{ "metric": "ageSec", "op": "lt", "valueRef": "slackMaxSec" }] },
-          { "level": "dormant", "allOf": [{ "metric": "ageSec", "op": "lt", "valueRef": "dormantMaxSec" }] },
-          { "level": "dead", "allOf": [{ "metric": "ageSec", "op": "gte", "valueRef": "dormantMaxSec" }] }
+          {
+            "level": "active",
+            "allOf": [
+              {
+                "metric": "ageSec",
+                "op": "lt",
+                "valueRef": "activeMaxSec"
+              }
+            ]
+          },
+          {
+            "level": "slack",
+            "allOf": [
+              {
+                "metric": "ageSec",
+                "op": "lt",
+                "valueRef": "slackMaxSec"
+              }
+            ]
+          },
+          {
+            "level": "dormant",
+            "allOf": [
+              {
+                "metric": "ageSec",
+                "op": "lt",
+                "valueRef": "dormantMaxSec"
+              }
+            ]
+          },
+          {
+            "level": "dead",
+            "allOf": [
+              {
+                "metric": "ageSec",
+                "op": "gte",
+                "valueRef": "dormantMaxSec"
+              }
+            ]
+          }
         ]
       },
       "diagnosis": {
@@ -175,25 +442,33 @@
           "severity": "ok",
           "phenomenon": "她 {ageHuman} 前还在动，是活的。",
           "nextStep": "不用管，继续养。",
-          "vars": ["ageHuman"]
+          "vars": [
+            "ageHuman"
+          ]
         },
         "slack": {
           "severity": "watch",
           "phenomenon": "她今天醒过，但已经 {ageHuman} 没动静了，比平时安静。",
           "nextStep": "先等到今天收工再看一眼；如果明天还是这么安静，去看「健康」那栏有没有报错。",
-          "vars": ["ageHuman"]
+          "vars": [
+            "ageHuman"
+          ]
         },
         "dormant": {
           "severity": "watch",
           "phenomenon": "她已经 {ageDays} 天没动过了 —— 可能在休息，也可能卡住了。",
           "nextStep": "打开她的日志看最后一行是什么时候；然后重启一次再观察半天，还不动就查「依赖」那栏缺什么。",
-          "vars": ["ageDays"]
+          "vars": [
+            "ageDays"
+          ]
         },
         "dead": {
           "severity": "bad",
           "phenomenon": "她从 {ageDays} 天前就没再动过，基本可以认定停了。",
           "nextStep": "先看进程还在不在：不在就按启动命令拉起来；还在就翻日志最后的报错，十有八九是登录过期或依赖缺失。",
-          "vars": ["ageDays"]
+          "vars": [
+            "ageDays"
+          ]
         },
         "unknown": {
           "severity": "unknown",
@@ -207,7 +482,9 @@
           "when": "evidence.processAlive === false",
           "phenomenonSuffix": " 而且进程不在 —— 现在没有任何进程在跑她。",
           "nextStepTemplate": "按启动命令拉起来：{startHint}，起来后等 10 分钟再体检一次。",
-          "vars": ["startHint"]
+          "vars": [
+            "startHint"
+          ]
         }
       },
       "unknownWhen": [
@@ -216,14 +493,21 @@
         "该指标超时（reason=timeout）"
       ]
     },
-
     "rhythm": {
       "id": "rhythm",
       "nameZh": "节律",
       "question": "近 7 天她是不是每天都醒？还是三天打鱼两天晒网？",
       "unit": "days",
-      "sources": ["log_timestamps", "session_timestamps", "dedupe_entry_dates"],
-      "sourceOrder": ["log_timestamps", "session_timestamps", "dedupe_entry_dates"],
+      "sources": [
+        "log_timestamps",
+        "session_timestamps",
+        "dedupe_entry_dates"
+      ],
+      "sourceOrder": [
+        "log_timestamps",
+        "session_timestamps",
+        "dedupe_entry_dates"
+      ],
       "wakeDefinition": "某自然日（本地时区 00:00 分界）内出现 >= 1 条带时间戳的活动记录，即算一次唤醒。",
       "thresholds": {
         "metric": "activeDaysInWindow",
@@ -234,31 +518,79 @@
           "sparseMinActiveDays": 1
         },
         "bands": [
-          { "level": "steady", "allOf": [{ "metric": "activeDaysInWindow", "op": "gte", "valueRef": "steadyMinActiveDays" }] },
-          { "level": "drifting", "allOf": [{ "metric": "activeDaysInWindow", "op": "gte", "valueRef": "driftingMinActiveDays" }] },
-          { "level": "sparse", "allOf": [{ "metric": "activeDaysInWindow", "op": "gte", "valueRef": "sparseMinActiveDays" }] },
-          { "level": "stopped", "allOf": [{ "metric": "activeDaysInWindow", "op": "eq", "value": 0 }] }
+          {
+            "level": "steady",
+            "allOf": [
+              {
+                "metric": "activeDaysInWindow",
+                "op": "gte",
+                "valueRef": "steadyMinActiveDays"
+              }
+            ]
+          },
+          {
+            "level": "drifting",
+            "allOf": [
+              {
+                "metric": "activeDaysInWindow",
+                "op": "gte",
+                "valueRef": "driftingMinActiveDays"
+              }
+            ]
+          },
+          {
+            "level": "sparse",
+            "allOf": [
+              {
+                "metric": "activeDaysInWindow",
+                "op": "gte",
+                "valueRef": "sparseMinActiveDays"
+              }
+            ]
+          },
+          {
+            "level": "stopped",
+            "allOf": [
+              {
+                "metric": "activeDaysInWindow",
+                "op": "eq",
+                "value": 0
+              }
+            ]
+          }
         ]
       },
-      "displayMetrics": ["dailyCounts", "avgPerDay", "maxPerDay", "todayCount"],
+      "displayMetrics": [
+        "dailyCounts",
+        "avgPerDay",
+        "maxPerDay",
+        "todayCount"
+      ],
       "diagnosis": {
         "steady": {
           "severity": "ok",
           "phenomenon": "近 7 天有 {activeDays} 天醒来，平均每天 {avgPerDay} 次，作息是稳的。",
           "nextStep": "保持现状，不用动。",
-          "vars": ["activeDays", "avgPerDay"]
+          "vars": [
+            "activeDays",
+            "avgPerDay"
+          ]
         },
         "drifting": {
           "severity": "watch",
           "phenomenon": "近 7 天只有 {activeDays} 天醒来过，节律开始散了。",
           "nextStep": "先想一下是不是你自己手动开她的次数少了；如果是自动跑的，去看定时任务/常驻进程还在不在（crontab -l、systemctl --user list-timers）。",
-          "vars": ["activeDays"]
+          "vars": [
+            "activeDays"
+          ]
         },
         "sparse": {
           "severity": "bad",
           "phenomenon": "近 7 天只醒了 {activeDays} 天，基本是在偶尔挣扎一下。",
           "nextStep": "当成「快停了」处理：先看「存活」「健康」两栏，再看「依赖」第一项（ffmpeg）是不是缺了。",
-          "vars": ["activeDays"]
+          "vars": [
+            "activeDays"
+          ]
         },
         "stopped": {
           "severity": "bad",
@@ -278,15 +610,28 @@
         "该指标超时（reason=timeout）"
       ]
     },
-
     "throughput": {
       "id": "throughput",
       "nameZh": "工作量",
       "question": "她到底干了多少活？今天有没有干？",
       "unit": "count",
-      "sources": ["dedupe_store", "dedupe_sqlite", "log_processed_lines"],
-      "sourceOrder": ["dedupe_store", "dedupe_sqlite", "log_processed_lines"],
-      "formats": ["json_array", "json_object_items", "jsonl", "lines", "sqlite"],
+      "sources": [
+        "dedupe_store",
+        "dedupe_sqlite",
+        "log_processed_lines"
+      ],
+      "sourceOrder": [
+        "dedupe_store",
+        "dedupe_sqlite",
+        "log_processed_lines"
+      ],
+      "formats": [
+        "json_array",
+        "json_object_items",
+        "jsonl",
+        "lines",
+        "sqlite"
+      ],
       "thresholds": {
         "metric": "todayNew",
         "constants": {
@@ -296,12 +641,57 @@
           "maxEntriesCounted": 100000
         },
         "bands": [
-          { "level": "empty", "allOf": [{ "metric": "totalEntries", "op": "lte", "value": 0 }] },
-          { "level": "productive", "allOf": [{ "metric": "todayNew", "op": "gte", "valueRef": "productiveTodayMin" }] },
-          { "level": "stalled", "allOf": [{ "metric": "daysSinceLastNew", "op": "gte", "valueRef": "stalledAfterDays" }] },
-          { "level": "quiet", "allOf": [{ "metric": "totalEntries", "op": "gt", "value": 0 }] }
+          {
+            "level": "empty",
+            "allOf": [
+              {
+                "metric": "totalEntries",
+                "op": "lte",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "level": "productive",
+            "allOf": [
+              {
+                "metric": "todayNew",
+                "op": "gte",
+                "valueRef": "productiveTodayMin"
+              }
+            ]
+          },
+          {
+            "level": "stalled",
+            "allOf": [
+              {
+                "metric": "daysSinceLastNew",
+                "op": "gte",
+                "valueRef": "stalledAfterDays"
+              }
+            ]
+          },
+          {
+            "level": "quiet",
+            "allOf": [
+              {
+                "metric": "totalEntries",
+                "op": "gt",
+                "value": 0
+              }
+            ]
+          }
         ],
-        "timeFieldNames": ["processedAt", "processed_at", "ts", "time", "created_at", "createdAt", "date", "updatedAt"],
+        "timeFieldNames": [
+          "processedAt",
+          "processed_at",
+          "ts",
+          "time",
+          "created_at",
+          "createdAt",
+          "date",
+          "updatedAt"
+        ],
         "sqliteMagic": "SQLite format 3"
       },
       "diagnosis": {
@@ -309,19 +699,27 @@
           "severity": "ok",
           "phenomenon": "今天新处理了 {todayNew} 条，累计 {totalEntries} 条。",
           "nextStep": "不用动，她正常在出货。",
-          "vars": ["todayNew", "totalEntries"]
+          "vars": [
+            "todayNew",
+            "totalEntries"
+          ]
         },
         "quiet": {
           "severity": "watch",
           "phenomenon": "今天还没新增，累计 {totalEntries} 条 —— 可能今天本来就没活，也可能卡住了。",
           "nextStep": "先看「存活」「健康」：两栏都正常就只是今天没内容；「健康」报了错那就是卡住了，按那栏的提示处理。",
-          "vars": ["totalEntries"]
+          "vars": [
+            "totalEntries"
+          ]
         },
         "stalled": {
           "severity": "bad",
           "phenomenon": "已经 {daysSinceLastNew} 天没有新增了，判重表停在第 {totalEntries} 条。",
           "nextStep": "翻日志最后 20 行：最常见就两种 —— 登录失效（412/验证码）或源站根本没更新。前者按「健康」那栏重新登录。",
-          "vars": ["daysSinceLastNew", "totalEntries"]
+          "vars": [
+            "daysSinceLastNew",
+            "totalEntries"
+          ]
         },
         "empty": {
           "severity": "bad",
@@ -342,14 +740,21 @@
         "该指标超时（reason=timeout）"
       ]
     },
-
     "health": {
       "id": "health",
       "nameZh": "健康",
       "question": "她最近有没有在骂人？骂的是什么？",
       "unit": "hits",
-      "sources": ["log_tail_window", "log_tail_lines", "stderr_file"],
-      "sourceOrder": ["log_tail_window", "log_tail_lines", "stderr_file"],
+      "sources": [
+        "log_tail_window",
+        "log_tail_lines",
+        "stderr_file"
+      ],
+      "sourceOrder": [
+        "log_tail_window",
+        "log_tail_lines",
+        "stderr_file"
+      ],
       "thresholds": {
         "metric": "hardHits",
         "constants": {
@@ -362,60 +767,167 @@
           "sickSoftHits": 3
         },
         "bands": [
-          { "level": "critical", "allOf": [{ "metric": "hardHits", "op": "gte", "valueRef": "criticalHardHits" }] },
-          { "level": "sick", "allOf": [{ "metric": "hardHits", "op": "gte", "valueRef": "sickHardHits" }] },
-          { "level": "sick", "allOf": [{ "metric": "softHits", "op": "gte", "valueRef": "sickSoftHits" }] },
-          { "level": "noisy", "allOf": [{ "metric": "softHits", "op": "gte", "valueRef": "noisySoftHits" }] },
-          { "level": "clean", "allOf": [{ "metric": "hardHits", "op": "eq", "value": 0 }] }
+          {
+            "level": "critical",
+            "allOf": [
+              {
+                "metric": "hardHits",
+                "op": "gte",
+                "valueRef": "criticalHardHits"
+              }
+            ]
+          },
+          {
+            "level": "sick",
+            "allOf": [
+              {
+                "metric": "hardHits",
+                "op": "gte",
+                "valueRef": "sickHardHits"
+              }
+            ]
+          },
+          {
+            "level": "sick",
+            "allOf": [
+              {
+                "metric": "softHits",
+                "op": "gte",
+                "valueRef": "sickSoftHits"
+              }
+            ]
+          },
+          {
+            "level": "noisy",
+            "allOf": [
+              {
+                "metric": "softHits",
+                "op": "gte",
+                "valueRef": "noisySoftHits"
+              }
+            ]
+          },
+          {
+            "level": "clean",
+            "allOf": [
+              {
+                "metric": "hardHits",
+                "op": "eq",
+                "value": 0
+              }
+            ]
+          }
         ],
         "categories": [
           {
             "id": "loginExpired",
             "nameZh": "登录失效",
             "kind": "hard",
-            "keywords": ["登录失效", "未登录", "登录过期", "请重新登录", "登录状态失效", "cookie 失效", "cookie过期", "token expired", "401", "unauthorized", "invalid csrf"],
+            "keywords": [
+              "登录失效",
+              "未登录",
+              "登录过期",
+              "请重新登录",
+              "登录状态失效",
+              "cookie 失效",
+              "cookie过期",
+              "token expired",
+              "401",
+              "unauthorized",
+              "invalid csrf"
+            ],
             "fix": "重新登录一次，把新的 cookie/token 存回原来的位置，然后重启她。"
           },
           {
             "id": "riskControl",
             "nameZh": "风控拦截",
             "kind": "hard",
-            "keywords": ["412", "Precondition Failed", "请求被拦截", "风控", "-412", "403", "Forbidden", "access denied"],
+            "keywords": [
+              "412",
+              "Precondition Failed",
+              "请求被拦截",
+              "风控",
+              "-412",
+              "403",
+              "Forbidden",
+              "access denied"
+            ],
             "fix": "B 站一类的 412 通常是 cookie 或请求特征被拦：换新 cookie，把请求间隔调大（比如 5s 以上），再试。"
           },
           {
             "id": "rateLimited",
             "nameZh": "被限流",
             "kind": "hard",
-            "keywords": ["429", "Too Many Requests", "rate limit", "请求过于频繁", "操作频繁"],
+            "keywords": [
+              "429",
+              "Too Many Requests",
+              "rate limit",
+              "请求过于频繁",
+              "操作频繁"
+            ],
             "fix": "调大请求间隔或减少并发；限流期间继续硬跑只会越限越久。"
           },
           {
             "id": "captcha",
             "nameZh": "验证码",
             "kind": "hard",
-            "keywords": ["验证码", "captcha", "geetest", "滑块", "极验", "人机验证"],
+            "keywords": [
+              "验证码",
+              "captcha",
+              "geetest",
+              "滑块",
+              "极验",
+              "人机验证"
+            ],
             "fix": "验证码得人工过一次：手动登录、过掉验证码、存好新登录态，再让她继续跑。"
           },
           {
             "id": "breaker",
             "nameZh": "熔断",
             "kind": "hard",
-            "keywords": ["熔断", "circuit breaker", "circuit open", "已冷却", "cooldown", "暂停发送", "too many failures"],
+            "keywords": [
+              "熔断",
+              "circuit breaker",
+              "circuit open",
+              "已冷却",
+              "cooldown",
+              "暂停发送",
+              "too many failures"
+            ],
             "fix": "她触发了自己的熔断保护：先查清触发它的那条错误，修好之后再重启（或等冷却时间结束）让她复位。"
           },
           {
             "id": "runtimeError",
             "nameZh": "运行报错",
             "kind": "soft",
-            "keywords": ["error", "ERROR", "Error:", "Traceback", "Exception", "Unhandled", "panic", "FATAL", "致命"],
+            "keywords": [
+              "error",
+              "ERROR",
+              "Error:",
+              "Traceback",
+              "Exception",
+              "Unhandled",
+              "panic",
+              "FATAL",
+              "致命"
+            ],
             "fix": "把报错下面那几行 traceback 原样贴出来查；同一句反复刷就说明每次都失败。"
           },
           {
             "id": "ioError",
             "nameZh": "系统报错",
             "kind": "soft",
-            "keywords": ["ENOENT", "EACCES", "EPERM", "ECONNREFUSED", "ETIMEDOUT", "No such file", "permission denied", "磁盘", "disk full"],
+            "keywords": [
+              "ENOENT",
+              "EACCES",
+              "EPERM",
+              "ECONNREFUSED",
+              "ETIMEDOUT",
+              "No such file",
+              "permission denied",
+              "磁盘",
+              "disk full"
+            ],
             "fix": "看路径和权限：ENOENT 是文件没装/挪走了（比如 ffmpeg），EACCES 是权限不对，ECONNREFUSED 是依赖的服务没起。"
           }
         ]
@@ -431,19 +943,30 @@
           "severity": "watch",
           "phenomenon": "最近 24 小时有 {softHits} 条小报错（{topCategoryZh} 为主），但还在转。",
           "nextStep": "可以先不管；如果同一句话反复刷，把那一行原样发出来再查。",
-          "vars": ["softHits", "topCategoryZh"]
+          "vars": [
+            "softHits",
+            "topCategoryZh"
+          ]
         },
         "sick": {
           "severity": "bad",
           "phenomenon": "日志里在报警：{topCategoryZh} 命中 {hardHits} 次，她现在发的东西大概率是失败的。",
           "nextStep": "按类别处理：{fixHint}",
-          "vars": ["topCategoryZh", "hardHits", "fixHint"]
+          "vars": [
+            "topCategoryZh",
+            "hardHits",
+            "fixHint"
+          ]
         },
         "critical": {
           "severity": "bad",
           "phenomenon": "已经明确挂了：{topCategoryZh} 命中 {hardHits} 次，她现在什么都发不出去。",
           "nextStep": "现在就按这个修：{fixHint} 修完重启她，然后盯 10 分钟日志，还在刷同一句就把日志贴出来。",
-          "vars": ["topCategoryZh", "hardHits", "fixHint"]
+          "vars": [
+            "topCategoryZh",
+            "hardHits",
+            "fixHint"
+          ]
         },
         "unknown": {
           "severity": "unknown",
@@ -464,14 +987,27 @@
         "该指标超时（reason=timeout）"
       ]
     },
-
     "deps": {
       "id": "deps",
       "nameZh": "依赖",
       "question": "她要是跑不起来，缺的是哪一样？",
       "unit": "checks",
-      "sources": ["path_lookup", "exec_version", "stat_mtime", "access_w", "field_present", "statfs"],
-      "sourceOrder": ["path_lookup", "exec_version", "stat_mtime", "access_w", "field_present", "statfs"],
+      "sources": [
+        "path_lookup",
+        "exec_version",
+        "stat_mtime",
+        "access_w",
+        "field_present",
+        "statfs"
+      ],
+      "sourceOrder": [
+        "path_lookup",
+        "exec_version",
+        "stat_mtime",
+        "access_w",
+        "field_present",
+        "statfs"
+      ],
       "thresholds": {
         "metric": "failCount",
         "constants": {
@@ -483,10 +1019,46 @@
           "checksRequired": 6
         },
         "bands": [
-          { "level": "broken", "allOf": [{ "metric": "failCount", "op": "gte", "value": 1 }] },
-          { "level": "warn", "allOf": [{ "metric": "warnCount", "op": "gte", "value": 1 }] },
-          { "level": "unknown", "allOf": [{ "metric": "unknownCount", "op": "gte", "value": 1 }] },
-          { "level": "ready", "allOf": [{ "metric": "unknownCount", "op": "eq", "value": 0 }] }
+          {
+            "level": "broken",
+            "allOf": [
+              {
+                "metric": "failCount",
+                "op": "gte",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "level": "warn",
+            "allOf": [
+              {
+                "metric": "warnCount",
+                "op": "gte",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "level": "unknown",
+            "allOf": [
+              {
+                "metric": "unknownCount",
+                "op": "gte",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "level": "ready",
+            "allOf": [
+              {
+                "metric": "unknownCount",
+                "op": "eq",
+                "value": 0
+              }
+            ]
+          }
         ],
         "checks": [
           {
@@ -537,7 +1109,12 @@
             "id": "modelLine",
             "nameZh": "模型线路",
             "probe": "field_present",
-            "fields": ["model", "provider", "baseUrl", "apiBase"],
+            "fields": [
+              "model",
+              "provider",
+              "baseUrl",
+              "apiBase"
+            ],
             "pass": "至少一个字段存在且非空",
             "fail": "全部缺失或为空",
             "detailTemplate": "模型线路{status}",
@@ -568,19 +1145,29 @@
           "severity": "watch",
           "phenomenon": "有 {warnCount} 项需要留意：{failedChecksZh}。现在还能跑，但迟早绊到。",
           "nextStep": "按下面每条给的办法补：{fixHint}",
-          "vars": ["warnCount", "failedChecksZh", "fixHint"]
+          "vars": [
+            "warnCount",
+            "failedChecksZh",
+            "fixHint"
+          ]
         },
         "broken": {
           "severity": "bad",
           "phenomenon": "有 {failCount} 项已经坏了：{failedChecksZh}。她现在跑不起来或者跑起来也白跑。",
           "nextStep": "照着补，一条一条来：{fixHint} 补完再体检一次确认。",
-          "vars": ["failCount", "failedChecksZh", "fixHint"]
+          "vars": [
+            "failCount",
+            "failedChecksZh",
+            "fixHint"
+          ]
         },
         "unknown": {
           "severity": "unknown",
           "phenomenon": "有 {unknownCount} 项查不出来（缺路径或没权限），不能当成正常。",
           "nextStep": "先定位她的窝：--root <她的目录>；窝找到了，这六项大多就能查。",
-          "vars": ["unknownCount"]
+          "vars": [
+            "unknownCount"
+          ]
         }
       },
       "mustReportPerCheck": true,
@@ -589,21 +1176,49 @@
         "定位不到窝（stateRoot 为 null）"
       ]
     },
-
     "drift": {
       "id": "drift",
       "nameZh": "漂移",
       "question": "配置和程序还是不是一套的？升级/改名之后有没有谁没跟上？",
       "unit": "version",
-      "sources": ["config_schema_version", "config_version", "plugin_package_version", "rename_table"],
-      "sourceOrder": ["config_schema_version", "config_version", "plugin_package_version", "rename_table"],
-      "versionFieldOrder": ["schemaVersion", "schema_version", "configVersion", "version"],
-      "programVersionFieldOrder": ["version"],
+      "sources": [
+        "config_schema_version",
+        "config_version",
+        "plugin_package_version",
+        "rename_table"
+      ],
+      "sourceOrder": [
+        "config_schema_version",
+        "config_version",
+        "plugin_package_version",
+        "rename_table"
+      ],
+      "versionFieldOrder": [
+        "schemaVersion",
+        "schema_version",
+        "configVersion",
+        "version"
+      ],
+      "programVersionFieldOrder": [
+        "version"
+      ],
       "programVersionFile": "package.json",
       "renames": [
-        { "from": "cookiePath", "to": "credentials.cookieFile", "since": 2 },
-        { "from": "interval", "to": "postIntervalSec", "since": 2 },
-        { "from": "targets", "to": "subscriptions", "since": 3 }
+        {
+          "from": "cookiePath",
+          "to": "credentials.cookieFile",
+          "since": 2
+        },
+        {
+          "from": "interval",
+          "to": "postIntervalSec",
+          "since": 2
+        },
+        {
+          "from": "targets",
+          "to": "subscriptions",
+          "since": 3
+        }
       ],
       "thresholds": {
         "metric": "configSchemaVersion",
@@ -613,10 +1228,46 @@
           "staleFieldFailHits": 1
         },
         "bands": [
-          { "level": "drifted", "allOf": [{ "metric": "staleFieldHits", "op": "gte", "valueRef": "staleFieldFailHits" }] },
-          { "level": "drifted", "allOf": [{ "metric": "configSchemaVersion", "op": "lt", "valueRef": "minSupportedSchemaVersion" }] },
-          { "level": "mismatch", "allOf": [{ "metric": "configSchemaVersion", "op": "gt", "valueRef": "expectedSchemaVersion" }] },
-          { "level": "aligned", "allOf": [{ "metric": "configSchemaVersion", "op": "gte", "valueRef": "minSupportedSchemaVersion" }] }
+          {
+            "level": "drifted",
+            "allOf": [
+              {
+                "metric": "staleFieldHits",
+                "op": "gte",
+                "valueRef": "staleFieldFailHits"
+              }
+            ]
+          },
+          {
+            "level": "drifted",
+            "allOf": [
+              {
+                "metric": "configSchemaVersion",
+                "op": "lt",
+                "valueRef": "minSupportedSchemaVersion"
+              }
+            ]
+          },
+          {
+            "level": "mismatch",
+            "allOf": [
+              {
+                "metric": "configSchemaVersion",
+                "op": "gt",
+                "valueRef": "expectedSchemaVersion"
+              }
+            ]
+          },
+          {
+            "level": "aligned",
+            "allOf": [
+              {
+                "metric": "configSchemaVersion",
+                "op": "gte",
+                "valueRef": "minSupportedSchemaVersion"
+              }
+            ]
+          }
         ]
       },
       "diagnosis": {
@@ -624,19 +1275,29 @@
           "severity": "ok",
           "phenomenon": "配置版本 v{configSchemaVersion} 和程序对得上，也没有残留的旧字段。",
           "nextStep": "不用动。",
-          "vars": ["configSchemaVersion"]
+          "vars": [
+            "configSchemaVersion"
+          ]
         },
         "drifted": {
           "severity": "bad",
           "phenomenon": "配置还是旧格式（v{configSchemaVersion}，程序要 v{expectedSchemaVersion}），有 {staleFieldHits} 个字段已经被改名了。",
           "nextStep": "先备份配置，再跑一次她的迁移命令；没有迁移命令就按改名表手动改（比如 {firstStaleField} 换成新名字），改完重启她。",
-          "vars": ["configSchemaVersion", "expectedSchemaVersion", "staleFieldHits", "firstStaleField"]
+          "vars": [
+            "configSchemaVersion",
+            "expectedSchemaVersion",
+            "staleFieldHits",
+            "firstStaleField"
+          ]
         },
         "mismatch": {
           "severity": "bad",
           "phenomenon": "配置比程序新（配置 v{configSchemaVersion} > 程序支持的 v{expectedSchemaVersion}）—— 你升过配置但没升程序。",
           "nextStep": "把程序升到配套版本；升不了就把配置回滚到上一份备份，二选一，别让它带着旧程序读新配置。",
-          "vars": ["configSchemaVersion", "expectedSchemaVersion"]
+          "vars": [
+            "configSchemaVersion",
+            "expectedSchemaVersion"
+          ]
         },
         "unknown": {
           "severity": "unknown",
