@@ -26,14 +26,17 @@ export const MEMORY_DB_FILE_NAME = 'memory.db';
  *   fact       稳定客观信息   「主人住在杭州」   365
  *   preference 态度倾向       「讨厌香菜」       180
  *   episode    带时间的经历   「一起看了芙莉莲」  45
+ *   relation   人和人的关系   「阿杰是主人大学室友」 365
  */
-export const KINDS = Object.freeze(['fact', 'preference', 'episode']);
+export const KINDS = Object.freeze(['fact', 'preference', 'episode', 'relation']);
 
 /** 各 kind 的默认半衰期（CAPABILITIES-SPEC §3.1）。 */
 export const KIND_HALF_LIFE_DAYS = Object.freeze({
   fact: 365,
   preference: 180,
   episode: 45,
+  // 人物关系和人一样，忘得慢：和 fact 同档
+  relation: 365,
 });
 
 /** 半衰期兜底（未知 kind 时按 fact 处理，不炸）。 */

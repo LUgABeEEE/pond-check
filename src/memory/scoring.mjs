@@ -41,7 +41,13 @@ export const SCORE_FORMULA = '0.40×相关度 + 0.25×新鲜度 + 0.25×重要�
 export const SCAN_RELEVANCE_CAP = 0.5;
 
 /**
- * 新鲜度：exp(-days / halfLife)。未来时间按 0 天算（时钟漂移不许把新鲜度算成负天数）。
+ * 新鲜度：0.5 ** (days / halfLife)。未来时间按 0 天算（时钟漂移不许把新鲜度算成负天数）。
+ *
+ * **用 0.5 的幂而不是 e 的幂**（C2 上报、队长裁定改的）：
+ * 「半衰期 365 天」必须真的意味着「365 天后权重减半」。
+ * exp(-days/halfLife) 在 days=halfLife 时是 1/e ≈ 0.368 —— 那叫「e 折时间」，
+ * 不叫半衰期；按它算，365 天的半衰期实际 253 天就减半了，文档与行为不符。
+ *
  * @param {number} days
  * @param {number} halfLifeDays
  * @returns {number} 0..1
@@ -50,7 +56,7 @@ export function freshnessFactor(days, halfLifeDays) {
   const halfLife = Number(halfLifeDays);
   if (!Number.isFinite(halfLife) || halfLife <= 0) return 0;
   const elapsed = Math.max(0, Number(days) || 0);
-  return Math.exp(-elapsed / halfLife);
+  return Math.pow(0.5, elapsed / halfLife);
 }
 
 /**

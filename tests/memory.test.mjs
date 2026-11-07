@@ -396,7 +396,7 @@ test('四因子·新鲜度能主导排序：新的压倒旧的（其它因子全
   assert.equal(items[0].id, newer.id, '新鲜度必须决定顺序（否则 id 小的老记忆会赢）');
   assert.equal(items[1].id, older.id);
   assert.ok(items[0].why.freshness > items[1].why.freshness);
-  closeTo(items[1].why.freshness, Math.exp(-60 / 365), 1e-9, 'exp(-days/halfLife)');
+  closeTo(items[1].why.freshness, Math.pow(0.5, 60 / 365), 1e-9, '真半衰 0.5^(days/halfLife)');
   memory.close();
 });
 
@@ -804,14 +804,16 @@ test('便捷入口：remember / recall / forget / exportMemories 一次性函数
   assert.equal(exportMemories(options), '');
 });
 
-test('纯函数：新鲜度按 SPEC 公式 exp(-days/halfLife)（days=halfLife 时是 1/e）', () => {
-  // 注意：SPEC §3.4 的公式原文是 exp(-days / halfLife)，照抄——
-  // 所以「一个半衰期」处是 exp(-1) ≈ 0.368；真要恰好 0.5 在 days = halfLife·ln2。
-  closeTo(freshnessFactor(365, 365), Math.exp(-1), 1e-9, '一个 halfLife');
-  closeTo(freshnessFactor(365 * Math.LN2, 365), 0.5, 1e-9, '恰好减半的时刻');
+test('纯函数：新鲜度按真半衰 0.5^(days/halfLife)（days=halfLife 时恰好减半）', () => {
+  // 队长裁定：半衰期必须真的是「减半」。
+  // 原实现照抄 SPEC 的 exp(-days/halfLife)，一个 halfLife 处是 1/e ≈ 0.368，
+  // 按它算「365 天半衰期」实际 253 天就减半了 —— 名字与行为不符。
+  // 改成 0.5^(days/halfLife)：一个 halfLife 恰好 0.5。
+  closeTo(freshnessFactor(365, 365), 0.5, 1e-9, '一个 halfLife 恰好减半');
+  closeTo(freshnessFactor(730, 365), 0.25, 1e-9, '两个 halfLife 剩四分之一');
   closeTo(freshnessFactor(0, 365), 1, 1e-9, '当天');
   closeTo(freshnessFactor(-5, 365), 1, 1e-9, '未来时间按 0 天算');
-  closeTo(freshnessFactor(45, 45), Math.exp(-1), 1e-9, 'episode 的 halfLife 45 天');
+  closeTo(freshnessFactor(45, 45), 0.5, 1e-9, 'episode 的 halfLife 45 天');
   closeTo(importanceFactor(5), 1, 1e-9);
   closeTo(importanceFactor(1), 0.2, 1e-9);
   closeTo(penaltyFactor(5), 0.5, 1e-9);
@@ -824,8 +826,10 @@ test('纯函数：半衰期按 kind，ttl_days 覆盖优先', () => {
   assert.equal(halfLifeDaysFor({ kind: 'preference' }), 180);
   assert.equal(halfLifeDaysFor({ kind: 'episode' }), 45);
   assert.equal(halfLifeDaysFor({ kind: 'fact', ttlDays: 7 }), 7);
-  assert.deepEqual([...KINDS], ['fact', 'preference', 'episode']);
-  assert.deepEqual({ ...KIND_HALF_LIFE_DAYS }, { fact: 365, preference: 180, episode: 45 });
+  assert.deepEqual([...KINDS], ['fact', 'preference', 'episode', 'relation']);
+  assert.deepEqual({ ...KIND_HALF_LIFE_DAYS }, {
+    fact: 365, preference: 180, episode: 45, relation: 365,
+  });
 });
 
 test('纯函数：CJK 二元切分——索引带 unigram，查询只给 bigram（单字除外）', () => {
