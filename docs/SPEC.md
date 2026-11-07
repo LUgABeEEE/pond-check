@@ -89,7 +89,7 @@
 ```
 P0  CLI 显式指定      --root <dir> / --fish <name> / --log <file> / --dedupe <file>
        ↓ 未指定
-P1  进程表            Linux: /proc/<pid>/{cmdline,cwd,exe,stat}
+P1  进程表            **v0.1.0 未实现**（见 §8 局限）：现返回空数组，不假装探到了
                       macOS: ps -eo pid,ppid,lstart,command（只读，一次调用）
                       Windows: v0.1 不支持 → 见 §3.5
        ↓ 进程表读不到（权限/平台）
@@ -103,7 +103,7 @@ P4  报「没找到鱼」     一行结论 + 一行「你现在该做什么」�
 **关键行为（必须实现）：**
 
 - **P1 与 P2 的结果要合并，不能二选一。** 「进程在跑但窝不在」和「窝在但进程没跑」都是真实现象，都要各自报出来：
-  - 进程在、窝不在 → 这条鱼是**黑盒鱼**：`liveness` 只能用进程启动时间（`/proc/<pid>/stat` 第 22 字段算 uptime）+ 工作目录里最新 mtime；`rhythm` / `throughput` / `drift` = `unknown`。
+  - 进程在、窝不在 → 这条鱼是**黑盒鱼**（**v0.1.0 暂不支持**：进程表未实现，见 §8）：`liveness` 只能用进程启动时间（`/proc/<pid>/stat` 第 22 字段算 uptime）+ 工作目录里最新 mtime；`rhythm` / `throughput` / `drift` = `unknown`。
   - 窝在、进程不在 → **有窝没鱼**：`liveness` 仍按 §4.1 的 mtime 判档，`diagnosis` 走 `processCold` 变体（文案见 §4.1 注），报告里明写「没在跑」。
 - **同一窝多进程**（例如 AstrBot 主进程 + NapCat 子进程）：按 `kind` 合并成一条鱼，`liveness` 取**最新**活动时间，`health` 合并两类日志，`evidence.processes[]` 列出全部 pid。
 - **去重键**：`kind + 真实路径（realpath 后）+ 端口`。同一个窝被 P1/P2 各发现一次只报一次。
@@ -134,15 +134,14 @@ P4  报「没找到鱼」     一行结论 + 一行「你现在该做什么」�
 
 | 平台 | v0.1 行为 |
 | --- | --- |
-| Linux | 全量支持（`/proc` 可用） |
-| macOS | `liveness` / `rhythm` / `throughput` / `health` / `deps` / `drift` 支持；进程启动时间用 `ps -eo lstart`；`/proc` 相关能力缺失时按 §3.3 降级 |
+| Linux | 支持六指标；**进程表未实现**（`processes` 恒为空，见 §8） |
+| macOS | 未在 v0.1.0 验证（开发机为 Linux）；代码不依赖 `/proc`，理论可用 |
 | Windows | **明确报 `unsupported`**：一行「本版本不扫 Windows」+ 一行「你现在该做什么（用 WSL 或等 v0.2）」。**不许**输出空报告假称健康。 |
 
 ### 3.6 允许执行的只读外部命令（白名单，闭集）
 
 | 命令 | 用途 | 超时 | 关闭方式 |
 | --- | --- | --- | --- |
-| `ps -eo pid,ppid,lstart,command` | 仅 macOS 的进程表 | 2s | (无) |
 | `ffmpeg -version` | 取版本号 | 1s | 不执行外部命令时改用 PATH 查找（只能判「在不在」，版本 `unknown`） |
 | `node --version` | 取版本号 | 1s | 同上 |
 | `<pid 的 exe> --version` | 探测鱼自己的运行时版本 | 1s | 同上 |
@@ -538,6 +537,10 @@ P4  报「没找到鱼」     一行结论 + 一行「你现在该做什么」�
 4. **时钟错乱**：未来 mtime 会让存活判定看起来「刚动过」，因此设 `futureSkewToleranceSec=120` 并把越界源作废留痕。
 5. **不认识的新鱼种**：kind 落到 `unknown`，只做 `liveness`（进程启动时间）+ `health`（若找到日志），其余 `unknown`。**新产品不该被假装体检通过。**
 6. **多窝同鱼**：按 `realpath` 去重；同一窝挂了两份配置（`profile`）时按 profile 各算一条鱼。
+7. **进程表未实现**：`processes` 恒为 `[]`。因此「进程在、窝不在」的黑盒鱼判不出来，会落到 `unknown`。`liveness` 仍靠日志 / session / 判重表的 mtime 工作，不受影响。
+8. **macOS 未验证**：开发与测试环境是 Linux；代码不依赖 `/proc`，理论可用但没有实测证据。
+9. **不读凭证内容**：「登录态新鲜度」只对白名单里的少数凭据文件 stat mtime，不 open、不出路径。这是有意的取舍，不是遗漏。
+10. **不做精确账单**：只做量级估算，报告里标注「估算」。
 
 ---
 
@@ -553,3 +556,5 @@ P4  报「没找到鱼」     一行结论 + 一行「你现在该做什么」�
 ## 10. 一句话总结
 
 **看得见 > 好看。判不出就说判不出。每条结论后面都必须跟着一句「那你现在该做什么」。**
+
+---

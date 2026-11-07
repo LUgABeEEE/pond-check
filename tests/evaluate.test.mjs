@@ -283,11 +283,13 @@ test('S05 有点吵的健康 + 停摆的工作量：watch/bad 各自成立', () 
   assert.equal(fish.worstIndicator, 'throughput');
 });
 
-test('S06 依赖坏了（缺 ffmpeg）：deps=broken，且逐项都带 detail/fix', () => {
+test('S06 依赖坏了（窝不可写）：deps=broken，且逐项都带 detail/fix', () => {
+  // 契约变更（队长裁定 D8-M3）：缺 ffmpeg 不再判 broken —— 那是能力缺失，不是「她坏了」。
+  // 真正能让 deps 坏掉的是「窝不可写」这类硬故障，用它来测 broken 这条路径。
   const read = perfectRead({
     deps: {
       ...perfectRead().deps,
-      ffmpeg: { found: false },
+      homeWritable: { writable: false, reason: 'eacces' },
     },
   });
   const fish = evaluateFish(read, { now: NOW, fieldPresence: {} });
@@ -295,9 +297,35 @@ test('S06 依赖坏了（缺 ffmpeg）：deps=broken，且逐项都带 detail/fi
   const checks = fish.indicators.deps.evidence.checks;
   assert.ok(Array.isArray(checks));
   assert.equal(checks.length, RULES.indicators.deps.thresholds.checks.length);
-  const ffmpeg = checks.find((check) => check.id === 'ffmpeg');
-  assert.equal(ffmpeg.status, 'fail');
-  assert.ok(ffmpeg.detail && ffmpeg.fix);
+  const hw = checks.find((check) => check.id === 'homeWritable');
+  assert.equal(hw.status, 'fail');
+  assert.ok(hw.detail && hw.fix);
+});
+
+test('S06b 缺 ffmpeg 只算提醒：deps=warn，不判死（D8-M3）', () => {
+  const read = perfectRead({
+    deps: {
+      ...perfectRead().deps,
+      ffmpeg: { found: false },
+    },
+  });
+  const fish = evaluateFish(read, { now: NOW, fieldPresence: {} });
+  assert.notEqual(fish.indicators.deps.level, 'broken', '缺 ffmpeg 不该把整条鱼判死');
+  assert.equal(fish.indicators.deps.level, 'warn');
+  const ffmpeg = fish.indicators.deps.evidence.checks.find((check) => check.id === 'ffmpeg');
+  assert.equal(ffmpeg.status, 'warn');
+  assert.ok(ffmpeg.detail && ffmpeg.fix, 'warn 也要带 detail 与 fix');
+});
+
+test('S06c 没配模型键只算判不出：modelLine=unknown，不判死（D8-H1）', () => {
+  // 不是每条鱼都用大模型。配置里一个模型键都没有 = 缺信息，不是「跑不起来」。
+  const read = perfectRead({
+    config: { schemaVersion: 3, schemaVersionField: 'schemaVersion' },
+  });
+  const fish = evaluateFish(read, { now: NOW, fieldPresence: {} });
+  const ml = fish.indicators.deps.evidence.checks.find((check) => check.id === 'modelLine');
+  assert.equal(ml.status, 'unknown');
+  assert.notEqual(fish.indicators.deps.level, 'broken');
 });
 
 test('S07 配置旧格式（schemaVersion=1）：drift=drifted', () => {

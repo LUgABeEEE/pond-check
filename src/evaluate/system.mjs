@@ -749,10 +749,17 @@ function buildCheck(check, ctx) {
         };
       }
       if (found === false) {
+        // 队长裁定（D8-M3）：缺 ffmpeg 是**能力缺失**，不是「她坏了」。
+        // 从文件系统看不出这条鱼到底要不要看视频（kinds.producesVideo 全是 null，
+        // 生产路径恒 false 让原来的 ffmpegOptional 永远不生效）。
+        // 只有明确知道「这条鱼要看视频」时才 fail；否则 warn —— 提醒有，但不判死。
+        const needVideo = ctx.ffmpegRequired === true || ctx.ffmpegOptional === false && ctx.ffmpegRequiredKnown === true;
         return {
           ...base,
-          status: ctx.ffmpegOptional ? 'warn' : 'fail',
-          detail: render({ status: ctx.ffmpegOptional ? '没找到（这鱼不产视频，只记提醒）' : '没找到', version: '未知' }),
+          status: needVideo ? 'fail' : 'warn',
+          detail: needVideo
+            ? render({ status: '没找到（这条鱼要看视频，缺它抽不了帧）', version: '未知' })
+            : render({ status: '没找到（只影响视频相关功能；不看视频的鱼可以忽略）', version: '未知' }),
         };
       }
       return { ...base, status: 'unknown', detail: render({ status: '查不出（没有依赖探测结果）', version: '未知' }) };
@@ -837,10 +844,13 @@ function buildCheck(check, ctx) {
         return { ...base, status: 'unknown', detail: render({ status: '判断不了（配置没读到）' }) };
       }
       const configured = Object.values(fieldsPresent).some((value) => value === true);
+      // 队长裁定（D8-H1）：一个模型键都没有 → unknown，不是 fail。
+      // 不是每条鱼都用大模型（桌面宠物、纯 UI 插件、只做本地探测的）。
+      // 「没配模型」是缺少信息，不是「跑不起来」——判 fail 会把整条鱼拉成「死了」。
       return {
         ...base,
-        status: configured ? 'pass' : 'fail',
-        detail: render({ status: configured ? '已配' : '没配' }),
+        status: configured ? 'pass' : 'unknown',
+        detail: render({ status: configured ? '已配' : '没配（这条鱼可能不用大模型，不一定是坏事）' }),
       };
     }
 

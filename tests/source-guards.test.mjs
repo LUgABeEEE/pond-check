@@ -223,3 +223,68 @@ test('红线·只读：src 里只有 cli.mjs 允许写文件', () => {
     `这些文件在写磁盘，但只读铁律只允许 cli.mjs 写报告：\n${violations.join('\n')}`,
   );
 });
+
+/* ------------------------------------------------------------------ *
+ * 6. unknown 灯色不许偏绿（D8-H4 假闭环修复）
+ *
+ * 上面那条查的是 class 名 —— 复审指出这是假闭环：把 `--unknown` 的色值
+ * 从灰改成绿，121 个用例照样全绿，而 `.light-unknown { background: var(--unknown) }`
+ * 说明这个变量就是灯的颜色。所以必须直接查色值。
+ * ------------------------------------------------------------------ */
+
+/** 把 #rgb / #rrggbb 解析成 [r,g,b]。 */
+function parseHexColor(raw) {
+  if (typeof raw !== 'string') return null;
+  const value = raw.trim();
+  if (/^#[0-9a-fA-F]{3}$/u.test(value)) {
+    return [1, 2, 3].map((i) => Number.parseInt(value[i] + value[i], 16));
+  }
+  if (/^#[0-9a-fA-F]{6}$/u.test(value)) {
+    return [1, 3, 5].map((i) => Number.parseInt(value.slice(i, i + 2), 16));
+  }
+  return null;
+}
+
+test('红线·unknown 灯色不许偏绿（颜色层，不是 class 名）', () => {
+  const htmlSource = fs.readFileSync(path.join(SRC, 'render', 'html.mjs'), 'utf8');
+
+  const grab = (name) => {
+    const matched = htmlSource.match(new RegExp(`--${name}:\\s*(#[0-9a-fA-F]{3,8})`, 'u'));
+    return matched ? matched[1] : null;
+  };
+
+  const unknownColor = grab('unknown');
+  const okColor = grab('ok');
+  assert.ok(unknownColor, '找不到 --unknown 颜色变量，守卫无从判断');
+  assert.ok(okColor, '找不到 --ok 颜色变量');
+
+  // 1) unknown 与 ok 不能是同一个颜色
+  assert.notEqual(
+    unknownColor.toLowerCase(),
+    okColor.toLowerCase(),
+    'unknown 和 ok 用了同一个色值 —— 灰的会冒充成绿的',
+  );
+
+  // 2) unknown 不能落在绿色系（g 明显压过 r 与 b）
+  const rgb = parseHexColor(unknownColor);
+  assert.ok(rgb, `--unknown 的色值 ${unknownColor} 解析不了`);
+  const [r, g, b] = rgb;
+  assert.equal(
+    g > r + 20 && g > b + 20,
+    false,
+    `--unknown 色值 ${unknownColor} 偏绿（rgb ${r},${g},${b}）—— 变异测试里那个「灰改绿」会重新骗过所有用例`,
+  );
+});
+
+test('红线·ok 灯色必须真是绿系（反过来也要成立）', () => {
+  const htmlSource = fs.readFileSync(path.join(SRC, 'render', 'html.mjs'), 'utf8');
+  const okColor = htmlSource.match(/--ok:\s*(#[0-9a-fA-F]{3,8})/u)?.[1];
+  assert.ok(okColor, '找不到 --ok 颜色变量');
+  const rgb = parseHexColor(okColor);
+  assert.ok(rgb, `--ok 的色值 ${okColor} 解析不了`);
+  const [r, g, b] = rgb;
+  assert.ok(
+    g > r + 20 && g > b + 20,
+    `--ok 色值 ${okColor} 竟然不是绿系（rgb ${r},${g},${b}）—— 两条红线一起失灵了`,
+  );
+});
