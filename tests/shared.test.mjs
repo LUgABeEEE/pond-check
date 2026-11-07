@@ -547,7 +547,14 @@ test('记账·文件不存在 / 全是坏行时返回 0，不抛', () => {
   assert.ok(Number.isFinite(empty.since));
   assert.ok(Number.isFinite(empty.until));
 
-  fs.writeFileSync(path.join(home, 'events.jsonl'), '坏行\n{"capability":"tts","units":"不是数字","ts":"2026-11-07T00:00:00Z"}\n');
+  // 时间戳必须是**动态当天**（C4 上报的日期炸弹）：
+  // 原来写死 2026-11-07T00:00:00Z，过了本地零点 spentToday 的窗口就滑走了，
+  // 这条断言会在 2026-11-08 00:00 CST 之后必然变红 —— 与任何代码改动无关。
+  const todayIso = new Date().toISOString();
+  fs.writeFileSync(
+    path.join(home, 'events.jsonl'),
+    `坏行\n{"capability":"tts","units":"不是数字","ts":"${todayIso}"}\n`,
+  );
   const dirty = spentToday('tts', { env: envFor(home) });
   assert.equal(dirty.units, 0);
   assert.equal(dirty.calls, 1, '合法 JSON 但 units 畸形：计一次调用、0 用量');
