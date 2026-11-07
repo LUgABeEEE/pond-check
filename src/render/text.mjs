@@ -262,12 +262,31 @@ function fishLabel(fish) {
  * 一模一样，贴到群里根本看不出是两条鱼。所以先留「base（…scope 尾部）」，实在放不下
  * 才退化成只留 base。
  */
-function shortenLabel(label, maxCols) {
+function shortenLabel(label, maxCols, mustDistinguish = false) {
   if (displayWidth(label) <= maxCols) return label;
   const matched = label.match(/^(.*?)（(.*)）$/u);
   if (matched) {
     const base = matched[1];
     const scope = matched[2];
+
+    // 必须区分时（同一批里出现同名鱼）：**先给 scope 留位置，再压 base**。
+    // 否则 base 一长就把 scope 挤没了，两行变得一模一样 —— 贴到群里根本看不出是两条鱼。
+    // D8-H5：真机两条 dsh-whale-widget 就是这么撞脸的。
+    if (mustDistinguish) {
+      const brackets = displayWidth('（）') + displayWidth('…');
+      const scopeBudget = Math.max(4, Math.min(8, Math.floor(maxCols * 0.4)));
+      const tail = scope.length > scopeBudget ? scope.slice(-scopeBudget) : scope;
+      const baseBudget = maxCols - displayWidth(tail) - brackets;
+      if (baseBudget >= 3) {
+        const baseTail = displayWidth(base) > baseBudget ? base.slice(-baseBudget) : base;
+        const candidate = `${baseTail}（…${tail}）`;
+        if (displayWidth(candidate) <= maxCols) return candidate;
+      }
+      // base 实在压不下去：只留 scope，至少能分辨
+      const onlyScope = `（…${tail}）`;
+      if (displayWidth(onlyScope) <= maxCols) return onlyScope;
+    }
+
     const overhead = displayWidth(base) + displayWidth('（）') + displayWidth('…');
     const scopeBudget = maxCols - overhead;
     if (scopeBudget >= 4) {
@@ -430,7 +449,7 @@ function bucketOf(fish) {
   return classifyFishBucket(fish);
 }
 
-function buildRow(fish) {
+function buildRow(fish, mustDistinguish = false) {
   const severity = normalizeSeverity(fish?.severity);
   const indicators = fish?.indicators && typeof fish.indicators === 'object' ? fish.indicators : {};
 
@@ -438,7 +457,7 @@ function buildRow(fish) {
     // 行首图标跟**鱼级分桶**走，不跟最差格：否则「四格有结论、两格判不出」的鱼会
     // 顶着 ❓ 却被统计成「活跃」，同一份报告里两个说法打架。
     icon: ICONS[bucketOf(fish)] ?? ICONS.unknown,
-    name: sanitizeCell(shortenLabel(fishLabel(fish), MAX_NAME_COLS)),
+    name: sanitizeCell(shortenLabel(fishLabel(fish), MAX_NAME_COLS, mustDistinguish)),
     life: sanitizeCell(lifeCell(fish, indicators)),
     work: sanitizeCell(workCell(indicators)),
     note: sanitizeCell(noteCell(severity, indicators)),
@@ -594,9 +613,25 @@ export function renderText(report) {
     }
 
     const fishes = Array.isArray(report.fishes) ? report.fishes : [];
-    const rows = fishes.map((fish) => {
+
+    // 同名检测必须做在**压缩之后**：
+    // fishLabel 返回完整名字（两条不同 profile 的鱼名字本来就不一样），
+    // 是 shortenLabel 把 scope 压掉之后才变得一模一样的。
+    // D8-H5：真机两条 dsh-whale-widget 就是这么撞脸的。
+    const firstPass = fishes.map((fish) => {
       try {
-        return buildRow(fish);
+        return shortenLabel(fishLabel(fish), MAX_NAME_COLS, false);
+      } catch {
+        return '';
+      }
+    });
+    const nameCounts = new Map();
+    for (const label of firstPass) nameCounts.set(label, (nameCounts.get(label) ?? 0) + 1);
+
+    const rows = fishes.map((fish, index) => {
+      try {
+        const mustDistinguish = (nameCounts.get(firstPass[index]) ?? 0) > 1;
+        return buildRow(fish, mustDistinguish);
       } catch {
         return { ...BROKEN_ROW };
       }

@@ -1034,7 +1034,15 @@
         "日志尾部无可读行",
         "读取被权限拒绝（reason=permission_denied）",
         "该指标超时（reason=timeout）"
-      ]
+      ],
+      "variants": {
+        "window_truncated": {
+          "status": "unknown",
+          "phenomenon": "日志太大了，这次只看了最后一段（覆盖 {coveredHours} 小时，不到 24 小时），所以「没看到报错」不等于「真的没报错」。",
+          "nextStep": "想真正确认最近一天的健康状况：把日志按天切开或调大日志上限，再跑一次；急着排查就直接 grep 一下日志里的 412/429。",
+          "fixShort": "日志被截断，健康判不出"
+        }
+      }
     },
     "deps": {
       "id": "deps",

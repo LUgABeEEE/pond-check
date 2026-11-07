@@ -462,9 +462,9 @@ P4  报「没找到鱼」     一行结论 + 一行「你现在该做什么」�
 ```json
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-11-07T10:00:00.000Z",
+  "meta": { "generatedAt": "2026-11-07T10:00:00.000Z", "pondCheckVersion": "0.1.0", "scanCount": 1 },
   "host": { "platform": "linux", "node": "22.11.0" },
-  "fish": [{
+  "fishes": [{
     "id": "dsh-bilibili@/home/u/.dsh",
     "kind": "dsh",
     "name": "DSH · bilibili 插件",
@@ -494,6 +494,10 @@ P4  报「没找到鱼」     一行结论 + 一行「你现在该做什么」�
   "skippedSensitive": { "count": 2, "names": "[凭证文件已跳过]" }
 }
 ```
+
+> **字段名以实际实现为准（D8-H2 修正）**：早期本文件写的是顶层 `generatedAt` 与 `fish`，
+> 实际输出是 `meta.generatedAt` 与 `fishes`。下游请按实际输出对接——`tests/render.test.mjs`
+> 与 `tests/docs-consistency.test.mjs` 会断言文档与实现一致，两边不会再漂。
 
 - `summary` 数**格子**（`fish` 是鱼数）；`fishBuckets` 数**鱼**（按 §6.1 的关键格口径，三处渲染共用）。
 - `fish.bucket` / `fish.severity` 是两个口径：`severity` 是最差格（决定排序），`bucket` 是鱼级结论。

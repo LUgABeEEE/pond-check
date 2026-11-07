@@ -82,7 +82,6 @@ EOF
 chmod +x ~/.local/bin/pond-check
 ```
 
-> 注意：`npm install -g .` 在 0.1.0 里**还不可用**（bin 入口缺 shebang，装出来跑不起来，已知问题）。在那之前请用上面两种方式。
 
 ## 输出长什么样
 

@@ -315,6 +315,19 @@ function maxFixesPerFish() {
 /** 统一的 unknown 出口：档位 + 原因 + 缺什么 + 降级留痕，一处收口。 */
 function unknownIndicator(spec, { reason, evidence = {}, missing = [], notes = [] }) {
   const diag = diagnose(spec, 'unknown', {});
+
+  // 不同 reason 说不同的话：rules.json 的 variants[reason] 是专用文案。
+  // 否则「日志被截断」会被说成「读不到日志」，用户照着去翻路径，白折腾一场。
+  // （D8-B1 修复的一部分：判 unknown 是不够的，话术也得对上。）
+  const variant = spec?.variants?.[reason];
+  const context = `${spec.id}:unknown:${reason}`;
+  const phenomenon = typeof variant?.phenomenon === 'string'
+    ? fillTemplate(variant.phenomenon, evidence, context)
+    : diag.phenomenon;
+  const nextStep = typeof variant?.nextStep === 'string'
+    ? fillTemplate(variant.nextStep, evidence, context)
+    : diag.nextStep;
+
   return {
     id: spec.id,
     nameZh: spec.nameZh,
@@ -323,8 +336,8 @@ function unknownIndicator(spec, { reason, evidence = {}, missing = [], notes = [
     value: null,
     unit: spec.unit,
     evidence: { ...evidence, reason, missing: missing.slice(), ...(notes.length > 0 ? { notes } : {}) },
-    phenomenon: diag.phenomenon,
-    nextStep: diag.nextStep,
+    phenomenon,
+    nextStep,
     degraded: [{ indicator: spec.id, reason, missing: missing.slice() }],
   };
 }
@@ -423,6 +436,33 @@ export function evaluateHealth(pondData = {}, options = {}) {
     && windowHours !== null
     && logAgeSec !== null
     && logAgeSec > windowHours * SECONDS_PER_HOUR;
+
+  // 5.3b 窗口覆盖率（假健康禁令 · D8-B1）
+  //
+  // 日志被 256 KiB 尾部截断时，「尾部窗口里没看到报错」绝不等于「24 小时内没报错」。
+  // 反例：7.17 MB 日志、2 小时前真有 3 条 412，但尾部窗口只覆盖了 3.7%（约 53 分钟），
+  // 412 被挤出窗口，报告却写「最近 24 小时没看到报错 / 不用动」——这是本项目的头号红线。
+  const firstMs = isFiniteNumber(log.firstTimestamp?.ms) ? log.firstTimestamp.ms : null;
+  const coveredSec = (firstMs !== null && lastMs !== null && lastMs >= firstMs)
+    ? Math.round((lastMs - firstMs) / 1000)
+    : null;
+  const windowSec = windowHours !== null ? windowHours * SECONDS_PER_HOUR : null;
+
+  // 只有「确实被截断」且「首尾时间都在」时才敢算覆盖率；
+  // 没截断说明整个文件都在窗口里，不需要担心。
+  if (log.truncated === true && coveredSec !== null && windowSec !== null && coveredSec < windowSec) {
+    return unknownIndicator(spec, {
+      reason: 'window_truncated',
+      evidence: {
+        source: sourceSummary(logSource),
+        windowHours,
+        coveredHours: Math.round((coveredSec / SECONDS_PER_HOUR) * 10) / 10,
+        bytesRead: isFiniteNumber(log.bytesRead) ? log.bytesRead : null,
+        truncated: true,
+      },
+      missing: ['log_window'],
+    });
+  }
 
   // 5.4 分档（阈值全在 rules.json）
   const levelInfo = safeBands(spec, { hardHits, softHits }, options);

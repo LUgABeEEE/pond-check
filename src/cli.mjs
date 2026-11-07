@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 /**
  * pond-check · D5 收口：CLI 入口（src/cli.mjs）
  *

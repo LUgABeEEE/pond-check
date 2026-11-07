@@ -90,17 +90,27 @@ function looksLikePathName(value) {
 
 function matchesSkipPattern(value) {
   let anyMatch = false;
-  for (const { pattern, re } of SKIP_REGEXES) {
-    if (!re.test(value)) continue;
-    anyMatch = true;
-    // 无通配符的整名模式：authorized_keys / known_hosts / .netrc → 无条件脱敏
-    const hasWildcards = pattern.includes('*') || pattern.includes('?');
-    if (!hasWildcards) return true;
-    // 「前缀*」单侧模式的整名：id_ed25519 这类无扩展名 SSH 文件
-    const onlyTrailing = pattern.endsWith('*')
-      && !pattern.slice(0, -1).includes('*')
-      && !pattern.includes('?');
-    if (onlyTrailing && value.toLowerCase() === pattern.slice(0, -1).toLowerCase()) return true;
+
+  // 模式是**按文件名**定义的（`id_ed25519*`、`.npmrc`），而输入常是**完整路径**。
+  // 只拿整串去匹配会永远差一口气：`^id_ed25519.*$` 匹配不上 `/home/u/.ssh/id_ed25519`。
+  // 所以整串和 basename 各试一遍。（D8c 变异测试：fixes 长版曾整段漏掉脱敏。）
+  const candidates = [value];
+  const base = value.split(/[/\\]/u).pop();
+  if (base && base !== value) candidates.push(base);
+
+  for (const candidate of candidates) {
+    for (const { pattern, re } of SKIP_REGEXES) {
+      if (!re.test(candidate)) continue;
+      anyMatch = true;
+      // 无通配符的整名模式：authorized_keys / known_hosts / .netrc / .npmrc → 无条件脱敏
+      const hasWildcards = pattern.includes('*') || pattern.includes('?');
+      if (!hasWildcards) return true;
+      // 「前缀*」单侧模式的整名：id_ed25519 / id_rsa 这类无扩展名 SSH 文件
+      const onlyTrailing = pattern.endsWith('*')
+        && !pattern.slice(0, -1).includes('*')
+        && !pattern.includes('?');
+      if (onlyTrailing && candidate.toLowerCase() === pattern.slice(0, -1).toLowerCase()) return true;
+    }
   }
   // 宽模式（*auth* 等）只咬「形似文件名/路径」的字符串 —— 防误伤
   // 'unauthorized'、'token expired' 这类普通词/日志关键词。
@@ -243,7 +253,11 @@ function buildFish(fish) {
     traceHint: str(source.traceHint),
     worstIndicator: rawStr(source.worstIndicator),
     headline: str(source.headline),
-    fixes: strArray(source.fixes),
+    // 和 fixesShort 用同一道脱敏：同一个字段的两个版本不该有两套待遇。
+    // （D8c 变异测试发现 fixesShort 脱敏、fixes 不脱敏 —— 长版才是默认展示的那个。）
+    fixes: Array.isArray(source.fixes)
+      ? source.fixes.map((item) => (typeof item === 'string' && item !== '' ? scrubString(item) : null))
+      : [],
     // 与 fixes 一一对应的短版（可能含 null），供窄屏/群聊使用
     fixesShort: Array.isArray(source.fixesShort)
       ? source.fixesShort.map((item) => (typeof item === 'string' && item !== '' ? scrubString(item) : null))

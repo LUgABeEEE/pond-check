@@ -34,7 +34,8 @@
  *   LogTail（ok:true）：
  *     { ok, path, size, bytesRead, fromOffset, truncated, firstLinePartial,
  *       encoding:'utf8-loose', hasBinary, lines[], lineCount, linesTruncated,
- *       lastTimestamp, keywords:{categories[], hardHits, softHits, matched[]}, degraded[] }
+ *       lastTimestamp,
+    firstTimestamp, keywords:{categories[], hardHits, softHits, matched[]}, degraded[] }
  *   LogTail（ok:false）：
  *     { ok:false, reason, ...少量上下文 }   reason ∈ sensitive_skipped | enoent | eacces |
  *     not_a_file | empty | read_error | timeout
@@ -402,6 +403,24 @@ function buildResult(raw, ms, format, tz, yearAssumed, timeAssumed) {
  * @param {string[]} lines
  * @returns {(object & {linesAgo:number})|null}
  */
+/**
+ * 找缓冲区里**最早**一条可解析时间戳。
+ *
+ * 用途：health 要判断「尾部窗口到底覆盖了多长一段时间」。只看 lastTimestamp
+ * 会把「24 小时内只有 53 分钟在窗口里」误判成「24 小时内干净」—— 那是假健康。
+ */
+export function findFirstTimestamp(lines) {
+  if (!Array.isArray(lines)) return null;
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (typeof line !== 'string' || line.length === 0) continue;
+    if (!/\d{2}/.test(line)) continue;
+    const parsed = parseTimestamp(line);
+    if (parsed) return { ...parsed, linesAgo: lines.length - 1 - i };
+  }
+  return null;
+}
+
 export function findLastTimestamp(lines) {
   if (!Array.isArray(lines)) return null;
   for (let i = lines.length - 1; i >= 0; i -= 1) {
@@ -775,6 +794,7 @@ async function readAndAnalyze(absPath, budget) {
   const keywords = tallyLines(allLines, budget.categories, budget.maxSamples, budget.maxLineChars);
 
   const lastTimestamp = findLastTimestamp(allLines);
+  const firstTimestamp = findFirstTimestamp(allLines);
   if (!lastTimestamp) degraded.push({ indicator: 'log', reason: 'no_timestamp' });
   else if (lastTimestamp.yearAssumed) degraded.push({ indicator: 'log', reason: 'timestamp_year_assumed' });
   else if (lastTimestamp.timeAssumed) degraded.push({ indicator: 'log', reason: 'timestamp_time_assumed' });
@@ -802,6 +822,18 @@ async function readAndAnalyze(absPath, budget) {
         yearAssumed: lastTimestamp.yearAssumed,
         timeAssumed: lastTimestamp.timeAssumed,
         linesAgo: lastTimestamp.linesAgo,
+      }
+      : null,
+    firstTimestamp: firstTimestamp
+      ? {
+        raw: firstTimestamp.raw,
+        iso: firstTimestamp.iso,
+        ms: firstTimestamp.ms,
+        format: firstTimestamp.format,
+        tz: firstTimestamp.tz,
+        yearAssumed: firstTimestamp.yearAssumed,
+        timeAssumed: firstTimestamp.timeAssumed,
+        linesAgo: firstTimestamp.linesAgo,
       }
       : null,
     keywords,
