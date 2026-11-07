@@ -193,11 +193,13 @@ test('S01 空列表：报告骨架齐全、总评走「没扫到鱼」、绝不�
   const report = evaluate({ ponds: [] }, { now: NOW });
   assert.deepEqual(Object.keys(report), [
     'schemaVersion', 'generatedAt', 'host', 'fishes', 'summary',
+    // fishBuckets（数鱼，按关键格）/ traceCounts（有没有运行痕迹）/ bucketNote（认不出怎么讲）
+    'fishBuckets', 'traceCounts', 'bucketNote', 'traceNote',
     'verdict', 'nextAction', 'footnote', 'degradedCount', 'skippedSensitive',
   ]);
   assert.deepEqual(report.fishes, []);
   assert.deepEqual(report.summary, { fish: 0, ok: 0, watch: 0, bad: 0, unknown: 0 });
-  assert.match(report.verdict, /没扫到任何在跑的鱼/);
+  assert.match(report.verdict, /没扫到鱼/);
   assert.match(report.nextAction, /--root/);
   assert.equal(report.footnote, null);
   assert.equal(report.generatedAt, new Date(NOW).toISOString());
@@ -218,7 +220,7 @@ test('S02 六格全绿的鱼：六项都判出 ok，fixes 为空、总评 6 正�
   assert.equal(fish.severity, 'ok');
   assert.deepEqual(fish.fixes, []);
   assert.deepEqual(report.summary, { fish: 1, ok: 6, watch: 0, bad: 0, unknown: 0 });
-  assert.match(report.verdict, /1 条鱼 · 6 正常 · 0 要注意 · 0 坏了 · 0 判不出/);
+  assert.match(report.verdict, /1 条鱼 · 六格口径：6 正常 · 0 要注意 · 0 坏了 · 0 判不出/);
   assert.match(report.nextAction, /继续养/);
   assert.equal(report.footnote, null);
   for (const id of INDICATOR_IDS) assertIndicatorContract(fish.indicators[id], id);
@@ -252,8 +254,8 @@ test('S04 空窝（没有日志/判重表/配置）：六格全 unknown，绝不
   }
   assert.equal(fish.severity, 'unknown');
   assert.deepEqual(report.summary, { fish: 1, ok: 0, watch: 0, bad: 0, unknown: 6 });
-  assert.match(report.verdict, /1 条鱼 · 0 正常 · 0 要注意 · 0 坏了 · 6 判不出/);
-  assert.match(report.verdict, /6 项判不出来 —— 这些不是正常，是没看到。/);
+  assert.match(report.verdict, /1 条鱼 · 六格口径：0 正常 · 0 要注意 · 0 坏了 · 6 判不出/);
+  assert.match(report.verdict, /这些项不是正常，是没看到。/);
   assert.ok(report.footnote);
   assert.equal(report.degradedCount, 6);
 });

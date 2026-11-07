@@ -420,10 +420,42 @@ P4  报「没找到鱼」     一行结论 + 一行「你现在该做什么」�
    → 不用管，继续养。
 ```
 
-- 顶部总评：`N 条鱼 · X 正常 · Y 要注意 · Z 坏了 · W 判不出`
-- **`W > 0` 时总评里必须有一句：「W 项判不出来 —— 这些不是正常，是没看到。」**
+- 顶部总评：`N 条鱼 · 六格口径：X 正常 · Y 要注意 · Z 坏了 · W 判不出`
+  - `N 条鱼`数鱼、`X/Y/Z/W`数**格子**（`summary`），两类数字必须在同一句里标清口径，不许混着读（D6 裁定）。
+- **`W > 0` 时总评里必须有一句：「这些项不是正常，是没看到。」**
 - 排序：`bad`（`dead`/`empty`/`critical`/`broken`/`drifted`）→ `unknown` → `watch` → `ok`。**坏的排最上面。**
 - 每条鱼的 `fixes[]`：把六格里的 `nextStep` 去重合并成按优先级排的可执行清单，最多 3 条 —— 用户不会读完 6 段。
+  - 与 `fixes[]` 一一对应的 `fixesShort[]`：同一条建议的 ≤40 字短版（`rules.json` 每档 `fixShort`），给窄屏/群聊的「→ 最该做」用；短版是压缩，不是另写一句结论。
+
+**鱼级分桶（2026-11-07 D6 裁定，取代「按最差格」的旧口径）**
+
+六格口径回答「一共判出几个格子」，鱼级分桶回答「这条鱼算活着还是算认不出」——两码事。
+`evaluate` 的 `fish.bucket`、文本摘要末行统计、HTML 四灯**三处必须是同一套规则**：
+
+| 优先级 | 条件 | 桶 |
+| --- | --- | --- |
+| 1 | 任一格 `severity=bad` | 死了（`bad`） |
+| 2 | 任一格 `severity=watch` | 疲软（`watch`） |
+| 3 | **关键两格**（`liveness` + `throughput`）都 `unknown` | 认不出（`unknown`） |
+| 4 | 其余 | 活跃（`ok`） |
+
+理由：`liveness` 与 `throughput` 回答「她还在不在干活」。这两格能判，这条鱼就还活着；
+`rhythm`/`deps`/`health`/`drift` 判不出只需在「※ N 项数据读不到」里如实说，不该把整条鱼划进「认不出」。
+（旧口径下，一条 liveness=active · throughput=productive · health=clean · drift=aligned、
+只有 rhythm 与 deps 判不出的鱼会被算成「认不出」，与逐格结论直接打架。）
+
+**`unknown` 的两种话术（2026-11-07 D6 裁定，必修）**
+
+同样是「判不出」，两种成因必须分开说，否则用户不知道该修哪儿：
+
+| 成因 | 判据（`fish.trace`） | 话术 |
+| --- | --- | --- |
+| A 像鱼但没有运行痕迹 | 四类产物（日志/配置/判重表/会话）**一个都没定位到**（`trace=none`） | 「找到 N 个名字像鱼的插件，但没有任何运行痕迹（无日志/无判重表/无会话），可能只是界面组件。」（非插件时用「候选 / 目录占位」那版） |
+| B 有痕迹但读不到 | 定位到了、但 `sources.*.status=unreadable`（权限/格式/空文件） | 「找到了运行痕迹但读不到内容，可能是权限或路径不匹配，试试 --root <她的目录>。」 |
+
+- 若调用方已经指过窝（`--root` / `--log` / `--dedupe`），**不许再教用户指一次窝**，改用
+  「窝已指定但里面真的读不到：检查路径对不对、权限够不够、日志是不是真的写在这里。」
+- `--fish` 过滤没命中 ≠ 没鱼：总评要说「过滤条件「X」没匹配到鱼（本次扫到 N 条）」，不许说「没扫到鱼」。
 
 ### 6.2 `--json` 形状（下游只依赖这个）
 
@@ -446,13 +478,26 @@ P4  报「没找到鱼」     一行结论 + 一行「你现在该做什么」�
       "deps":      { "...": "同上" },
       "drift":     { "...": "同上" }
     },
+    "severity": "ok",
+    "bucket": "ok",
+    "trace": "present",
+    "traceHint": null,
     "fixes": ["..."],
+    "fixesShort": ["..."],
     "degraded": [{ "indicator": "rhythm", "reason": "no_timestamps", "missing": ["timestamps"] }]
   }],
   "summary": { "fish": 1, "ok": 5, "watch": 1, "bad": 0, "unknown": 0 },
+  "fishBuckets": { "ok": 1, "watch": 0, "bad": 0, "unknown": 0 },
+  "traceCounts": { "none": 0, "unreadable": 0, "present": 1 },
+  "bucketNote": null,
+  "traceNote": null,
   "skippedSensitive": { "count": 2, "names": "[凭证文件已跳过]" }
 }
 ```
+
+- `summary` 数**格子**（`fish` 是鱼数）；`fishBuckets` 数**鱼**（按 §6.1 的关键格口径，三处渲染共用）。
+- `fish.bucket` / `fish.severity` 是两个口径：`severity` 是最差格（决定排序），`bucket` 是鱼级结论。
+- `trace` ∈ `none` / `unreadable` / `present`；`traceHint` 是随成因给出的那句人话（没有就是 `null`）。
 
 约束：`indicators` 必须**恰好**是这六个键；每个必须是 `rules.json` 里声明过的 `level`；`severity` 必须与该 level 在 rules.json 中登记的 severity 一致（D3 断言）。
 

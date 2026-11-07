@@ -29,10 +29,17 @@ pond-check 只做一件事：**把「看不见」变成「看得见」**。
 ## 用法（开发中）
 
 ```bash
-node src/cli.mjs            # 扫一遍，生成报告
-node src/cli.mjs --json     # 只要 JSON
-node src/cli.mjs --text     # 只要可贴群的纯文本摘要
+node src/cli.mjs              # 扫一遍，生成报告（HTML 落在当前目录）
+node src/cli.mjs --json       # 只要 JSON
+node src/cli.mjs --text       # 只要可贴群的纯文本摘要
+
+# 逃生口：自动扫没找全时，人给她指路（指了就只体检这一条）
+node src/cli.mjs --root <她的目录>       # 指窝：日志/配置/判重表都在这儿找
+node src/cli.mjs --log <日志文件>        # 只指日志（日志不在窝里时用）
+node src/cli.mjs --dedupe <判重表文件>   # 只指判重表（名字不符合惯例时用）
 ```
+
+`--help` 里有完整参数表、退出码（0 正常 / 2 参数用错 / 1 真异常）和只读承诺。
 
 ## 开发
 

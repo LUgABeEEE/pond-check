@@ -42,7 +42,7 @@
  *   另导出排版小工具供收口测试复用：displayWidth / truncateToWidth / padToWidth / formatAgeHuman
  */
 
-import { BAND_LABELS } from '../evaluate/index.mjs';
+import { BAND_LABELS, classifyFishBucket } from '../evaluate/index.mjs';
 
 /* ------------------------------------------------------------------ *
  * 预算：一屏之内
@@ -51,11 +51,20 @@ import { BAND_LABELS } from '../evaluate/index.mjs';
 /** 最多展开多少条鱼（其余在统计里照样计数，末尾会留一行说明） */
 const MAX_ROWS = 20;
 
-/** 名字列最多占多少列（超过就截断，避免一行的名字把后面几列全推走） */
-const MAX_NAME_COLS = 26;
+/**
+ * 名字列最多占多少列（超过就截断，避免一行的名字把后面几列全推走）。
+ *
+ * 26/28 的旧值让最坏一行到 92 列（名字 26 + 备注 28 + 图标 2 + 两列间隙 + 两列内容），
+ * 60 列的窄终端照样折（D6b P15）。降到 20/22 后最坏行约 60 列，一屏放得下。
+ */
+const MAX_NAME_COLS = 20;
 
 /** 备注列最多占多少列（「所以出什么事了」一句说完，别变成长篇） */
-const MAX_NOTE_COLS = 28;
+const MAX_NOTE_COLS = 22;
+
+/** 「→ 最该做」这一行的宽度预算：超过就折，因为这一行是要照抄去执行的 */
+const MAX_ACTION_COLS = 60;
+
 
 /** 时间单位换算一律由这三个基数相乘得出，**不写秒/天的字面量**（SPEC 的源码扫描会把判定字面量当违规） */
 const SEC_PER_MIN = 60;
@@ -76,12 +85,21 @@ const ICONS = Object.freeze({
  * ------------------------------------------------------------------ */
 
 /**
+ * 东亚「歧义宽度」字符：在这些终端里按 1 列算，在中文 locale 的终端里按 2 列渲染。
+ *
+ * … (U+2026) / · (U+00B7) / → (U+2192) 三个我们自己在用，按 2 列算 —— 中文终端
+ * 是主要使用场景，宁可在这里多算一列，也不要让整张表在中文终端里右移错位（D6b P16）。
+ */
+const AMBIGUOUS_WIDE = new Set([0x2026, 0x00b7, 0x2192, 0x2014, 0x2013]);
+
+/**
  * 单个码点的显示宽度（终端列）。
  * 0 = 组合符 / 变体选择符 / 零宽连接符（跟着前一个字符走，不占位）
- * 2 = 中日韩文字、全角标点、emoji
+ * 2 = 中日韩文字、全角标点、emoji、东亚歧义宽度字符（见 AMBIGUOUS_WIDE）
  * 1 = 其余
  */
 function charWidth(codePoint) {
+  if (AMBIGUOUS_WIDE.has(codePoint)) return 2;
   if (codePoint === 0x200d) return 0; // ZWJ
   if (codePoint === 0xfe0e || codePoint === 0xfe0f) return 0; // VS15 / VS16
   if (codePoint >= 0x0300 && codePoint <= 0x036f) return 0; // 组合附加符
@@ -405,12 +423,21 @@ function digestIndicator(id, indicator) {
  * 组装
  * ------------------------------------------------------------------ */
 
+/** 鱼级分桶：D4 已经算好就用它的，缺了（合成报告/老数据）就按同一套规则现算。 */
+function bucketOf(fish) {
+  const declared = fish && typeof fish.bucket === 'string' ? fish.bucket : null;
+  if (declared === 'ok' || declared === 'watch' || declared === 'bad' || declared === 'unknown') return declared;
+  return classifyFishBucket(fish);
+}
+
 function buildRow(fish) {
   const severity = normalizeSeverity(fish?.severity);
   const indicators = fish?.indicators && typeof fish.indicators === 'object' ? fish.indicators : {};
 
   return {
-    icon: ICONS[severity] ?? ICONS.unknown,
+    // 行首图标跟**鱼级分桶**走，不跟最差格：否则「四格有结论、两格判不出」的鱼会
+    // 顶着 ❓ 却被统计成「活跃」，同一份报告里两个说法打架。
+    icon: ICONS[bucketOf(fish)] ?? ICONS.unknown,
     name: sanitizeCell(shortenLabel(fishLabel(fish), MAX_NAME_COLS)),
     life: sanitizeCell(lifeCell(fish, indicators)),
     work: sanitizeCell(workCell(indicators)),
@@ -457,28 +484,96 @@ function headerLine(report) {
   return parts.join(' · ');
 }
 
-/**
- * 一句「所以现在该做什么」。
- *
- * 优先用**排序后第一条有 fix 的鱼**的第一条 fix（D4 已按严重度排好），前面挂短名；
- * report.nextAction 里带的是完整显示名（很长），贴群里会把这一行推到 160 列开外，
- * 所以只当没有 fixes 时才退回去用它。
- */
-function actionLine(report, fishes) {
-  for (const fish of fishes) {
-    const fixes = Array.isArray(fish?.fixes) ? fish.fixes : [];
-    const fix = fixes.find((item) => typeof item === 'string' && item.trim() !== '');
-    if (!fix) continue;
-    return `→ 最该做：${sanitizeCell(shortenLabel(fishLabel(fish), MAX_NAME_COLS))}：${sanitizeCell(fix)}`;
-  }
-  const fallback = typeof report?.nextAction === 'string' ? sanitizeCell(report.nextAction) : '';
-  return fallback !== '' ? `→ 最该做：${fallback}` : null;
+/** 长句里给「窝路径」留的位置：`<她的目录>` / `<她的安装目录>` 两种占位符都认。 */
+const ROOT_PLACEHOLDER = /<她的(?:安装)?目录>/gu;
+
+/** 这句话是不是在让用户「指路」（决定要不要单独印出窝路径）。 */
+function mentionsRoot(text) {
+  const value = typeof text === 'string' ? text : '';
+  return value.includes('--root') || ROOT_PLACEHOLDER.test(value) || value.includes('<她的目录>');
 }
 
-/** 末尾统计行：四个词是固定口径（ok/watch/bad/unknown），不随渲染口味变 */
-function statLine(fishes) {
+/** 把占位符换成她真实的窝（已脱敏）；拿不到路径就原样留着，绝不编一个。 */
+function fillRootPlaceholder(text, fish) {
+  const value = typeof text === 'string' ? text : '';
+  const root = typeof fish?.stateRoot === 'string' && fish.stateRoot !== ''
+    && fish.stateRoot !== '[凭证文件已跳过]'
+    ? fish.stateRoot
+    : null;
+  if (root === null) return value;
+  return value.replace(ROOT_PLACEHOLDER, root).replace(/<她的安装目录>/gu, root);
+}
+
+/** 长句 → 第一小句（只在没有 fixShort 时兜底；仍然不编造结论） */
+function firstClause(text) {
+  const value = typeof text === 'string' ? text.trim() : '';
+  if (value === '') return '';
+  const cut = value.split(/[；。]/u)[0];
+  return cut === '' ? value : cut;
+}
+
+/**
+ * 一句「所以现在该做什么」—— 可能返回两行：
+ *   1. `→ 最该做：<鱼名>：<短句>`，宽度控制在 MAX_ACTION_COLS 以内；
+ *   2. 需要的话再单独一行 `    窝：<她的真实路径>`。
+ *
+ * 为什么分两行（D6b P5/P17/P22）：单行拼下来 128 列，40 列窗口里 `--root` 会被劈成
+ * `--roo` / `t`，照抄就错；而窝路径又是用户真正要敲的那个字符串。短句（rules 的
+ * fixShort）+ 独立的路径行，两个问题一起解决：短句给人看懂，命令原样可复制。
+ */
+function actionLines(report, fishes) {
+  let target = null;
+  let fix = '';
+  for (const fish of fishes) {
+    const fixes = Array.isArray(fish?.fixes) ? fish.fixes : [];
+    const found = fixes.find((item) => typeof item === 'string' && item.trim() !== '');
+    if (!found) continue;
+    target = fish;
+    fix = found;
+    break;
+  }
+
+  if (target === null) {
+    const fallback = typeof report?.nextAction === 'string' ? sanitizeCell(report.nextAction) : '';
+    return fallback !== '' ? [`→ 最该做：${truncateToWidth(fallback, MAX_ACTION_COLS)}`] : [];
+  }
+
+  const shorts = Array.isArray(target.fixesShort) ? target.fixesShort : [];
+  const index = Array.isArray(target.fixes) ? target.fixes.indexOf(fix) : 0;
+  const short = index >= 0 && typeof shorts[index] === 'string' && shorts[index].trim() !== ''
+    ? shorts[index]
+    : null;
+
+  const label = sanitizeCell(shortenLabel(fishLabel(target), MAX_NAME_COLS));
+  const head = sanitizeCell(short ?? firstClause(fix));
+  // 短句里可能带 <她的目录>：先替换成真实窝路径（P22），再按宽度预算截
+  const headFilled = fillRootPlaceholder(head, target);
+  const prefix = `→ 最该做：${label}：`;
+  const budget = Math.max(12, MAX_ACTION_COLS - displayWidth(prefix));
+  const lines = [`${prefix}${truncateToWidth(headFilled, budget)}`];
+
+  const root = typeof target.stateRoot === 'string' ? target.stateRoot : '';
+  if (root !== '' && root !== '[凭证文件已跳过]' && (mentionsRoot(fix) || mentionsRoot(head))) {
+    // 路径原样印全：截断的路径没法复制粘贴，而它正是用户要敲的那个字符串
+    lines.push(`    窝：${root}`);
+  }
+  return lines;
+}
+
+/**
+ * 末尾统计行：四个词是固定口径，数的是**鱼的条数**。
+ *
+ * 分桶按关键格（evaluate 的 classifyFishBucket）：任一格坏了 → 死了；任一格要注意 →
+ * 疲软；存活与工作量两格都判不出 → 认不出；否则 → 活跃。这样一条「四格有结论、
+ * 只有 rhythm/deps 判不出」的鱼不会被整条划进「认不出」（D6 队长裁定）。
+ */
+function statBuckets(fishes) {
   const buckets = { ok: 0, watch: 0, bad: 0, unknown: 0 };
-  for (const fish of fishes) buckets[normalizeSeverity(fish?.severity)] += 1;
+  for (const fish of fishes) buckets[bucketOf(fish)] += 1;
+  return buckets;
+}
+
+function statLine(fishes, buckets) {
   return `共 ${fishes.length} 条，活跃 ${buckets.ok} / 疲软 ${buckets.watch}`
     + ` / 死了 ${buckets.bad} / 认不出 ${buckets.unknown}。`;
 }
@@ -515,8 +610,12 @@ export function renderText(report) {
     if (hidden > 0) {
       lines.push(`… 还有 ${hidden} 条没展开（坏的排在前面；要看全部用 --json）`);
     }
-    const action = actionLine(report, fishes);
-    if (action) lines.push(action);
+    // 0 条鱼时 verdict 已经把「没扫到 / 过滤没匹配上」说完了，再来一句「最该做」只是重复（P8）
+    if (fishes.length > 0) lines.push(...actionLines(report, fishes));
+    // 「像鱼但没有任何运行痕迹」这句（A 版）单独一行：它解释的是「为什么全是判不出」，
+    // 比再复述一遍总评有用得多（D6 必修缺陷一）
+    const traceNote = typeof report?.traceNote === 'string' ? sanitizeCell(report.traceNote) : '';
+    if (fishes.length > 0 && traceNote !== '') lines.push(`※ ${traceNote}`);
     const footnote = typeof report.footnote === 'string' ? sanitizeCell(report.footnote) : '';
     if (footnote !== '') lines.push(`※ ${footnote}`);
     const skipped = report.skippedSensitive && isFiniteNumber(report.skippedSensitive.count)
@@ -529,7 +628,13 @@ export function renderText(report) {
     // 一条鱼都没有的时候，把 D4 的「没扫到鱼」那句话带上 —— 空报告不许假装体检通过
     const verdict = typeof report.verdict === 'string' ? sanitizeCell(report.verdict) : '';
     if (fishes.length === 0 && verdict !== '') lines.push(verdict);
-    lines.push(statLine(fishes));
+
+    const buckets = statBuckets(fishes);
+    // 「认不出」和六格的「判不出」不是一个词义，别让用户以为鱼不见了（P19）。
+    // 这句话由 D4 按 rules.rollup.unknownBucketNoteTemplate 填好，渲染层不另编文案。
+    const bucketNote = typeof report?.bucketNote === 'string' ? sanitizeCell(report.bucketNote) : '';
+    if (fishes.length > 0 && buckets.unknown > 0 && bucketNote !== '') lines.push(`※ ${bucketNote}`);
+    lines.push(statLine(fishes, buckets));
 
     return lines.join('\n');
   } catch {

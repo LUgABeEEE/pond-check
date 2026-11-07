@@ -395,8 +395,8 @@ test(
     );
     assert.notEqual(fish.indicators.health.level, 'clean', '内容读不懂的日志，不能说「干净」');
     assert.equal(
-      report.footnote?.includes('health'), true,
-      '就算不改档位，脚注也必须把 health 这条「读不懂」列出来，不能整条吞掉',
+      report.footnote?.includes('健康'), true,
+      '就算不改档位，脚注也必须把健康这条「读不懂」列出来（脚注用中文格名），不能整条吞掉',
     );
   },
 );

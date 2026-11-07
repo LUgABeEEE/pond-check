@@ -19,7 +19,7 @@
  * （D3 读取层 / D4 显示路径脱敏）就地解决，这里只负责把已脱敏的字段转义后画出来。
  */
 
-import { BAND_LABELS, INDICATOR_IDS } from '../evaluate/index.mjs';
+import { BAND_LABELS, INDICATOR_IDS, UNIT_LABELS, classifyFishBucket } from '../evaluate/index.mjs';
 
 /* ------------------------------------------------------------------ *
  * 0. 常量：全是「渲染用的展示词」，不参与任何判定
@@ -92,6 +92,20 @@ function escOr(value, fallback) {
   return esc(textOrNull(value) ?? fallback);
 }
 
+/**
+ * ISO 时间 → 本地「YYYY-MM-DD HH:mm」。
+ * 与文本摘要（text.mjs 的 headerLine）用同一个口径，同份报告在两处显示一致。
+ */
+function formatLocalStamp(iso) {
+  if (typeof iso !== 'string' || iso === '') return '（报告里没写生成时间）';
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms)) return iso;
+  const date = new Date(ms);
+  const pad = (value) => String(value).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} `
+    + `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
 /** severity → CSS 类名；不认识的一律按 unknown（灰色），绝不当绿。 */
 function sevClass(severity) {
   const sev = textOrNull(severity);
@@ -124,19 +138,34 @@ function valueText(cell) {
   const raw = String(value).trim();
   if (raw === '') return null;
   const unit = textOrNull(cell?.unit);
-  return unit ? `${raw} ${unit}` : raw;
+  if (!unit) return raw;
+  // 机器单位（sec/days/checks…）换成中文；表里没有的原样留着，不猜
+  const unitZh = isObject(UNIT_LABELS) ? textOrNull(UNIT_LABELS[unit]) : null;
+  return `${raw} ${unitZh ?? unit}`;
 }
 
 /* ------------------------------------------------------------------ *
  * 2. 卡片零件
  * ------------------------------------------------------------------ */
 
-/** 状态灯：绿/黄/红圆点，unknown 是灰色问号 —— 一眼可辨、不冒充正常。 */
+/**
+ * 状态灯：绿/黄/红圆点，unknown 是灰色问号 —— 一眼可辨、不冒充正常。
+ *
+ * 颜色之外再给一个符号（✓ / ! / × / ?）：色弱用户分不出绿红（D6b P18），
+ * 加个字符的成本是零，但报告对 8% 的男性用户从「看不出」变成「看得出」。
+ */
+const LIGHT_GLYPH = Object.freeze({
+  ok: '✓',
+  watch: '!',
+  bad: '×',
+  unknown: '?',
+});
+
 function lightHtml(severity) {
   const cls = sevClass(severity);
   const word = sevWord(severity);
-  const inner = cls === 'unknown' ? '?' : '';
-  return `<span class="light light-${cls}" role="img" aria-label="${esc(word)}">${inner}</span>`;
+  const inner = LIGHT_GLYPH[cls] ?? '';
+  return `<span class="light light-${cls}" role="img" aria-label="${esc(word)}" title="${esc(word)}">${inner}</span>`;
 }
 
 /** 六指标小卡：格名 + 档位短名 + 原样数值，颜色跟着 severity 走。 */
@@ -204,7 +233,8 @@ function degradedLine(fish) {
 /** 一条鱼一张卡。 */
 function fishCardHtml(fish, index) {
   const data = isObject(fish) ? fish : {};
-  const cls = sevClass(data.severity);
+  // 卡片状态灯跟鱼级分桶（与四灯、文本统计行同一口径）；六格小卡仍然一格格显示 severity
+  const cls = sevClass(bucketOf(data));
   const name = textOrNull(data.name) ?? textOrNull(data.id) ?? `第 ${index + 1} 条鱼（报告里没写名字）`;
   const stateRoot = textOrNull(data.stateRoot);
   const chips = INDICATOR_IDS.map((id) => chipHtml(id, isObject(data.indicators) ? data.indicators[id] : null)).join('\n');
@@ -228,7 +258,7 @@ function fishCardHtml(fish, index) {
 
   return `<article class="card card-${cls}" aria-label="${esc(name)}">
   <header class="card-head">
-    ${lightHtml(data.severity)}
+    ${lightHtml(bucketOf(data))}
     <h2 class="card-name">${esc(name)}</h2>
   </header>
   ${stateRoot === null ? '' : `<p class="card-root">窝：${esc(stateRoot)}</p>`}
@@ -246,12 +276,22 @@ ${chips}
  * 3. 页面零件
  * ------------------------------------------------------------------ */
 
-/** 顶部总览四盏灯：数的是**鱼的条数**（活跃/疲软/死了/认不出）。 */
+/** 鱼级分桶：D4 已经算好就用它的，缺了就按同一套规则现算（与文本统计行同源）。 */
+function bucketOf(fish) {
+  const declared = textOrNull(fish?.bucket);
+  if (declared === 'ok' || declared === 'watch' || declared === 'bad' || declared === 'unknown') return declared;
+  return classifyFishBucket(fish);
+}
+
+/**
+ * 顶部总览四盏灯：数的是**鱼的条数**（活跃/疲软/死了/认不出）。
+ *
+ * 分桶按关键格（evaluate 的 classifyFishBucket，与文本统计行、与 evaluate 层同一口径）：
+ * 「四格有结论、只有 rhythm/deps 判不出」的鱼算活跃，不算认不出。
+ */
 function overviewHtml(fishes) {
   const counts = { ok: 0, watch: 0, bad: 0, unknown: 0 };
-  for (const fish of fishes) {
-    counts[sevClass(fish?.severity)] += 1;
-  }
+  for (const fish of fishes) counts[bucketOf(fish)] += 1;
   return OVERVIEW_LIGHTS.map((light) => `<div class="ov ov-${light.severity}">
   <span class="ov-count">${counts[light.severity]}</span>
   <span class="ov-label">${esc(light.label)}</span>
@@ -496,7 +536,12 @@ export function renderHtml(report) {
     }
 
     const fishes = Array.isArray(data.fishes) ? data.fishes : [];
-    const generatedAt = escOr(data.generatedAt, '（报告里没写生成时间）');
+    // 文本摘要用的是本地时间，HTML 原来印 UTC（差 8 小时，看着像旧报告，D6b P11）。
+    // 统一本地时间；ISO 原值留在 title 里，机器要精确时间照样拿得到。
+    const generatedAtIso = textOrNull(data.generatedAt);
+    const generatedAt = generatedAtIso === null
+      ? esc('（报告里没写生成时间）')
+      : `<time datetime="${esc(generatedAtIso)}" title="${esc(generatedAtIso)}">${esc(formatLocalStamp(generatedAtIso))}</time>`;
     const platform = escOr(data.host?.platform, '—');
     const node = escOr(data.host?.node, '—');
 

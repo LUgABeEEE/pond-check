@@ -236,11 +236,39 @@ function buildFish(fish) {
     processes: buildProcess(source.processes),
     indicators: buildIndicators(source.indicators),
     severity: rawStr(source.severity),
+    // 鱼级分桶（关键格口径），与 severity（最差格）并存：一个决定怎么报，一个决定怎么排
+    bucket: rawStr(source.bucket),
+    // 有没有运行痕迹：none = 像鱼但什么都没留下；unreadable = 有痕迹读不出；present = 读到了
+    trace: rawStr(source.trace),
+    traceHint: str(source.traceHint),
     worstIndicator: rawStr(source.worstIndicator),
     headline: str(source.headline),
     fixes: strArray(source.fixes),
+    // 与 fixes 一一对应的短版（可能含 null），供窄屏/群聊使用
+    fixesShort: Array.isArray(source.fixesShort)
+      ? source.fixesShort.map((item) => (typeof item === 'string' && item !== '' ? scrubString(item) : null))
+      : [],
     degraded: buildDegraded(source.degraded),
     notes: strArray(source.notes),
+  };
+}
+
+function buildBuckets(buckets) {
+  const source = isObject(buckets) ? buckets : {};
+  return {
+    ok: num(source.ok) ?? 0,
+    watch: num(source.watch) ?? 0,
+    bad: num(source.bad) ?? 0,
+    unknown: num(source.unknown) ?? 0,
+  };
+}
+
+function buildTraceCounts(counts) {
+  const source = isObject(counts) ? counts : {};
+  return {
+    none: num(source.none) ?? 0,
+    unreadable: num(source.unreadable) ?? 0,
+    present: num(source.present) ?? 0,
   };
 }
 
@@ -278,6 +306,11 @@ export function buildJsonReport(report) {
     host: buildHost(source),
     fishes: fishes.map(buildFish),
     summary: buildSummary(source.summary, fishes.length),
+    // 鱼级分桶（数鱼）与 summary（数格）是两套口径，都给出来，别让人猜
+    fishBuckets: buildBuckets(source.fishBuckets),
+    traceCounts: buildTraceCounts(source.traceCounts),
+    bucketNote: str(source.bucketNote),
+    traceNote: str(source.traceNote),
     verdict: str(source.verdict),
     nextAction: str(source.nextAction),
     footnote: str(source.footnote),

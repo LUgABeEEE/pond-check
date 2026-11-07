@@ -8,6 +8,10 @@
  *   --out <路径>  指定 HTML 输出路径
  *   --root <路径> 指定鱼的窝（stateRoot）—— 逃生口：自动扫找不到她的
  *                 日志/配置/判重表时，人来指路，只体检这一个窝
+ *   --log <路径>  单独指定日志文件 —— 日志不在窝里（或被起了别名）时的
+ *                 更高精度逃生口；等价于 --root <她的目录> + 指定日志
+ *   --dedupe <路径> 单独指定判重表 —— 名字不叫 processed/seen 之类的判重表被
+ *                 自动扫漏掉时用；与 --root / --log 可任意组合
  *   --fish <名字> 只体检指定的一条鱼（按 id / 窝路径 / 目录名做不区分
  *                 大小写的子串匹配；常与 --root 连用）
  *   --help        用法
@@ -48,6 +52,10 @@ export const USAGE = `pond-check · 鱼况体检 —— 只读扫描机器上在
   pond-check --root <路径>    指定鱼的窝（stateRoot）：只体检这个窝。
                               自动扫找不到她的日志/配置/判重表时的逃生口：
                               把她的目录指给体检，六格才有机会判出来。
+  pond-check --log <路径>     直接指定她的日志文件：日志不在窝里、或名字不叫
+                              *.log 时用这个。可与 --root 连用（窝 + 日志各指各的）。
+  pond-check --dedupe <路径>  直接指定她的判重表（记录「干过哪些活」的那个文件）：
+                              名字不叫 processed / seen / history 时用这个。
   pond-check --fish <名字>    只体检指定的一条鱼。按 鱼 id / 窝路径 / 目录名
                               做不区分大小写的子串匹配；常与 --root 连用。
   pond-check --help           显示本用法
@@ -74,6 +82,8 @@ export function parseCliArgs(argv) {
     mode: 'html',
     out: null,
     root: null,
+    log: null,
+    dedupe: null,
     fish: null,
     errors: [],
   };
@@ -89,13 +99,16 @@ export function parseCliArgs(argv) {
       wantJson = true;
     } else if (arg === '--text') {
       wantText = true;
-    } else if (arg === '--out' || arg === '--root' || arg === '--fish') {
+    } else if (arg === '--out' || arg === '--root' || arg === '--log'
+      || arg === '--dedupe' || arg === '--fish') {
       const value = args[i + 1];
       if (typeof value !== 'string' || value === '' || value.startsWith('--')) {
         out.errors.push(`${arg} 缺少参数值（后面要跟一个非空的值）`);
       } else {
         if (arg === '--out') out.out = value;
         else if (arg === '--root') out.root = value;
+        else if (arg === '--log') out.log = value;
+        else if (arg === '--dedupe') out.dedupe = value;
         else out.fish = value;
         i += 1;
       }
@@ -181,6 +194,49 @@ function buildPonds(parsed, deps, warn) {
     ponds = discovered;
   }
 
+  // --log / --dedupe：粒度高一级的逃生口。产物不在窝里、或名字不符合惯例时直接指文件。
+  // 语义与 --root 一致是**替换**：指了就只体检这一条，免得同一个窝出两张卡。
+  const pinned = {};
+  for (const [key, raw] of [['log', parsed.log], ['dedupe', parsed.dedupe]]) {
+    if (typeof raw !== 'string' || raw === '') continue;
+    const abs = path.resolve(deps.cwd, raw);
+    let isFile = false;
+    try {
+      isFile = fs.statSync(abs).isFile();
+    } catch {
+      isFile = false;
+    }
+    if (!isFile) {
+      warn(`${key === 'log' ? '日志' : '判重表'}文件不存在（或不是普通文件）：${abs} —— 照常体检，相关几格大概率判不出。`);
+    }
+    pinned[key] = abs;
+  }
+
+  const pinnedKeys = Object.keys(pinned);
+  if (pinnedKeys.length > 0) {
+    if (typeof parsed.root === 'string' && parsed.root !== '') {
+      // 窝 + 产物各指各的：保留 --root 选的窝，只把指到的文件钉死
+      for (const pond of ponds) {
+        pond.paths = { ...(pond.paths ?? {}), ...pinned };
+      }
+    } else {
+      const anchor = pinned.log ?? pinned.dedupe;
+      const rootAbs = path.dirname(anchor);
+      const match = discovered.find((pond) => samePath(pond?.rootPath, rootAbs));
+      ponds = [match
+        ? { ...match, paths: { ...(match.paths ?? {}), ...pinned } }
+        : {
+          id: `pinned:${anchor}`,
+          kind: 'unknown',
+          rootPath: rootAbs,
+          evidence: {},
+          paths: { ...pinned },
+          reason: 'manual_path',
+        }];
+    }
+  }
+
+  let filterMiss = null;
   if (typeof parsed.fish === 'string' && parsed.fish !== '') {
     const before = ponds;
     ponds = ponds.filter((pond) => fishMatches(pond, parsed.fish));
@@ -190,9 +246,11 @@ function buildPonds(parsed, deps, warn) {
         .slice(0, 8)
         .join('、');
       warn(`没找到叫「${parsed.fish}」的鱼。本次扫到的是：${seen || '（一条都没有）'}`);
+      // 过滤没命中 ≠ 没鱼：报告要说清是哪一种（D6b P7）
+      filterMiss = { name: parsed.fish, scanned: before.length };
     }
   }
-  return ponds;
+  return { ponds, filterMiss };
 }
 
 /* ------------------------------------------------------------------ *
@@ -251,9 +309,14 @@ export async function runCli(argv, deps = {}) {
       return 2;
     }
 
-    const ponds = buildPonds(parsed, d, warn);
+    const { ponds, filterMiss } = buildPonds(parsed, d, warn);
     const reads = await d.readAll(ponds);
-    const report = d.evaluate({ ponds: Array.isArray(reads) ? reads : [] });
+    const report = d.evaluate({ ponds: Array.isArray(reads) ? reads : [] }, {
+      // 人已经指过路（--root / --log / --dedupe）：话术就不许再教他指一次（D6b P4 死循环）
+      rootHinted: typeof parsed.root === 'string' || typeof parsed.log === 'string'
+        || typeof parsed.dedupe === 'string',
+      filterMiss,
+    });
 
     if (parsed.mode === 'json') {
       if (parsed.out !== null) warn('--out 只作用于 HTML，本次 --json 输出走 stdout，--out 已忽略。');

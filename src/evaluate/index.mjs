@@ -113,6 +113,21 @@ export const BAND_LABELS = Object.freeze({
   }),
 });
 
+/** 六格数值单位的中文说法：只用于渲染（HTML 小卡 / 哪里要给人看的地方）。
+ *
+ * rules.json 里 unit 是机器单位（sec / days / count / hits / checks / version），
+ * 直接印在页面上就是「0 checks」这种半截英文（D6b P12）。这里给一张**只做展示**的
+ * 对照表；表里没有的单位原样回显，不猜、不美化。
+ */
+export const UNIT_LABELS = Object.freeze({
+  sec: '秒',
+  days: '天',
+  count: '条',
+  hits: '次',
+  checks: '项',
+  version: '号',
+});
+
 /** rules.discovery.kinds 的 id → 报告里用的 kind 名（D2 的 kind 与 rules 的 id 不同名）。 */
 const DISCOVERY_KIND_BY_ID = Object.freeze({
   'dsh-plugin': 'dsh',
@@ -152,6 +167,12 @@ function fill(template, vars = {}) {
     if (value === null || value === undefined) return '—';
     return String(value);
   });
+}
+
+/** 取 rollup 里的一条模板；缺了就退回内置的同一句（宁可重复一句，也不许留 {var}）。 */
+function templateOf(rules, key, fallback) {
+  const value = rules?.rollup?.[key];
+  return typeof value === 'string' && value !== '' ? value : fallback;
 }
 
 /** 当前生效的 rules：注入的 > system.mjs 里那份 > 磁盘。 */
@@ -350,7 +371,7 @@ function maxFixes(rules, options) {
  * 一条鱼的可执行清单：只收「不是 ok」的那几格的 nextStep，按严重度排、去重、封顶。
  * 六格全 ok 就是空数组 —— 报告里就不该出现「不用动」三行占位。
  */
-function collectFixes(rules, indicators, options) {
+function collectFixPlan(rules, indicators, options) {
   const order = fishOrder(rules);
   const entries = [];
   for (const id of INDICATOR_IDS) {
@@ -360,16 +381,57 @@ function collectFixes(rules, indicators, options) {
     if (severity === 'ok') continue;
     const step = typeof indicator.nextStep === 'string' ? indicator.nextStep.trim() : '';
     if (step === '') continue;
-    entries.push({ id, severity, index: order.indexOf(severity), step });
+    entries.push({
+      id,
+      severity,
+      index: order.indexOf(severity),
+      step,
+      short: shortFixOf(rules, id, indicator.level),
+    });
   }
   entries.sort((a, b) => (a.index - b.index) || (INDICATOR_IDS.indexOf(a.id) - INDICATOR_IDS.indexOf(b.id)));
-  const out = [];
+  const fixes = [];
+  const fixesShort = [];
   for (const entry of entries) {
-    if (out.includes(entry.step)) continue;
-    out.push(entry.step);
-    if (out.length >= maxFixes(rules, options)) break;
+    if (fixes.includes(entry.step)) continue;
+    fixes.push(entry.step);
+    // 没有 fixShort 的场合留 null（渲染层据此退回长句），绝不拿长句冒充短句
+    fixesShort.push(entry.short ?? null);
+    if (fixes.length >= maxFixes(rules, options)) break;
   }
-  return out;
+  return { fixes, fixesShort };
+}
+
+/**
+ * 一句话的短版（rules.indicators.<id>.diagnosis.<level>.fixShort）。
+ * 「→ 最该做」那一行要塞进群聊/窄终端，长句动辄 60–130 列（D6b §3），
+ * 短版是**同一句话的压缩**，不是另写一句结论 —— 所以它必须来自 rules，不在渲染层编。
+ */
+function shortFixOf(rules, id, level) {
+  const entry = rules?.indicators?.[id]?.diagnosis?.[level];
+  const short = typeof entry?.fixShort === 'string' ? entry.fixShort.trim() : '';
+  return short === '' ? null : short;
+}
+
+/**
+ * 这条鱼到底有没有「运行痕迹」—— 决定 unknown 的话该说 A 还是 B（D6 必修缺陷一）。
+ *
+ *   none       窝里四类产物一个都没定位到 → 「像鱼但没有任何运行痕迹，可能只是个界面组件」
+ *   unreadable 定位到了却读不出来（权限 / 路径 / 空文件 / 认不出格式）→ 「有痕迹但读不到，试试 --root」
+ *   present    至少一类产物读出来了
+ *
+ * 只消费 D3 已经给出的 sources[].status，不在这一层重新 stat 任何文件。
+ */
+function describeTrace(read) {
+  const sources = isObject(read?.sources) ? read.sources : {};
+  const statusOf = (key) => {
+    const status = sources?.[key]?.status;
+    return typeof status === 'string' ? status : 'missing';
+  };
+  const keys = ['log', 'config', 'dedupe', 'sessions'];
+  if (keys.some((key) => statusOf(key) === 'unreadable')) return 'unreadable';
+  if (keys.some((key) => statusOf(key) !== 'missing')) return 'present';
+  return 'none';
 }
 
 /** 一页报告里的那一行：「存活 活跃 · 节律 规律 · …」。 */
@@ -390,6 +452,44 @@ function buildHeadline(rules, indicators) {
     parts.push(`${nameZh} ${label}`);
   }
   return parts.join(' · ');
+}
+
+/* ------------------------------------------------------------------ *
+ * 3.5 鱼级分桶：按**关键格**，不按最差格（D6 队长裁定）
+ *
+ * 六格口径（summary）回答「一共有多少个格子判出来了」，鱼级分桶回答「这条鱼算活着
+ * 还是算认不出」——两码事，混在一起就会出现「四格有结论、只有 rhythm/deps 判不出，
+ * 却被整条划进『认不出』」的误导。
+ *
+ * 规则（顺序即优先级）：
+ *   1. 任一格 bad      → 死了
+ *   2. 任一格 watch    → 疲软
+ *   3. 关键两格（liveness + throughput）都 unknown → 认不出
+ *   4. 其余            → 活跃（rhythm / deps / health / drift 判不出不影响这条结论）
+ *
+ * 为什么关键格是这两格：它们回答「她还在不在干活」。这两格能判，这条鱼就还活着；
+ * 其余的判不出，如实写进「※ N 项数据读不到」就够了，不该改写整条鱼的结论。
+ * ------------------------------------------------------------------ */
+
+/** 关键两格：这两格都判不出，才整条鱼算「认不出」。 */
+export const KEY_INDICATORS = Object.freeze(['liveness', 'throughput']);
+
+/**
+ * 一条鱼的鱼级分桶。
+ * @param {object} fish Fish（只要有 indicators 就够）
+ * @returns {'ok'|'watch'|'bad'|'unknown'}
+ */
+export function classifyFishBucket(fish) {
+  const indicators = isObject(fish?.indicators) ? fish.indicators : {};
+  const severityOf = (id) => {
+    const value = indicators?.[id]?.severity;
+    // 没声明 / 不认识的一律当 unknown：宁可多报「判不出」，也不许少报
+    return value === 'ok' || value === 'watch' || value === 'bad' ? value : 'unknown';
+  };
+  if (INDICATOR_IDS.some((id) => severityOf(id) === 'bad')) return 'bad';
+  if (INDICATOR_IDS.some((id) => severityOf(id) === 'watch')) return 'watch';
+  if (KEY_INDICATORS.every((id) => severityOf(id) === 'unknown')) return 'unknown';
+  return 'ok';
 }
 
 /* ------------------------------------------------------------------ *
@@ -533,9 +633,13 @@ function failedFish(rules, pondData, error) {
     processes: [],
     indicators,
     severity: 'unknown',
+    bucket: 'unknown',
+    trace: 'none',
+    traceHint: null,
     worstIndicator: INDICATOR_IDS[0],
     headline: buildHeadline(rules, indicators),
     fixes: [indicators[INDICATOR_IDS[0]].nextStep],
+    fixesShort: [null],
     degraded: INDICATOR_IDS.map((id) => ({
       indicator: id,
       reason: 'aggregate_failed',
@@ -624,6 +728,9 @@ function evaluateFishCore(pondData, options = {}) {
   };
 
   const worst = worstOf(rules, indicators);
+  const bucket = classifyFishBucket({ indicators });
+  const trace = describeTrace(read);
+  const rootHinted = opts.rootHinted === true;
   const { kind, kindNameZh } = kindDisplayName(rules, read);
   const stateRoot = displayStateRoot(read.rootPath, rules);
   const short = shortName(read.rootPath, stateRoot);
@@ -660,6 +767,30 @@ function evaluateFishCore(pondData, options = {}) {
     }
   }
 
+  // 「→ 最该做」用的一对文案（长句 + 短句）：先按六格算，再按 trace 情况改写/前置。
+  const plan = collectFixPlan(rules, indicators, opts);
+  const fixes = plan.fixes;
+  const fixesShort = plan.fixesShort;
+  let traceHint = null;
+
+  if (bucket === 'unknown' && trace === 'unreadable') {
+    // B：定位到了但读不出来 —— 这时再说「指明她的窝」就是空话，得说「指了也读不到，查权限/路径」
+    traceHint = fill(templateOf(rules, 'unknownUnreadableTraceTemplate',
+      '找到了运行痕迹但读不到内容，可能是权限或路径不匹配，试试 --root <她的目录>。'), {});
+    fixes.unshift(traceHint);
+    fixesShort.unshift(templateOf(rules, 'unknownUnreadableTraceShort', '试试 --root 指她的窝（可能权限不对）'));
+  } else if (bucket === 'unknown' && trace === 'none' && rootHinted) {
+    // P4 死循环：窝已经指过了，还叫她再指一次就是让人原地打转
+    traceHint = fill(templateOf(rules, 'traceNoneAfterRootTemplate',
+      '窝已指定但里面真的读不到：检查路径对不对、权限够不够、日志是不是真的写在这里。'), {});
+    fixes.unshift(traceHint);
+    fixesShort.unshift(templateOf(rules, 'traceNoneAfterRootShort', '窝已指定：查路径/权限/日志是不是真写在这'));
+  }
+  while (fixes.length > maxFixes(rules, opts)) {
+    fixes.pop();
+    fixesShort.pop();
+  }
+
   return {
     id: typeof read.id === 'string' && read.id !== '' ? read.id : null,
     kind,
@@ -675,9 +806,17 @@ function evaluateFishCore(pondData, options = {}) {
       : [],
     indicators,
     severity: worst.severity,
+    // 鱼级结论（关键格口径）与 severity（最差格口径）是两码事：
+    // severity 决定「哪条鱼排前面」，bucket 决定「这条鱼算活着还是认不出」。
+    bucket,
+    trace,
+    traceHint,
+    // 这条鱼是不是用户亲手指过来的（--root / --log / --dedupe）：决定话术不许再教指路
+    rootHinted,
     worstIndicator: worst.indicator,
     headline: buildHeadline(rules, indicators),
-    fixes: collectFixes(rules, indicators, opts),
+    fixes,
+    fixesShort,
     degraded,
     notes,
   };
@@ -719,26 +858,69 @@ function countIndicators(rules, fishes) {
   return summary;
 }
 
-function buildVerdict(rules, summary) {
+/**
+ * 总评一句话。
+ *
+ * 三个口径各说各的、绝不混：
+ *   「N 条鱼」数鱼，「六格口径：X 正常…」数格子（summary），「找到 N 个…没有运行痕迹」
+ *   说的是**为什么判不出**。D6b P9 的毛病就是把这三种数字塞进一句话，读的人分不清
+ *   12 是 12 条鱼还是 12 个格子。
+ */
+function buildVerdict(rules, summary, context = {}) {
   const order = fishOrder(rules);
-  // SPEC §6.1 的写法：N 条鱼 · X 正常 · Y 要注意 · Z 坏了 · W 判不出
-  const base = `${summary.fish} 条鱼 · ${summary.ok} 正常 · ${summary.watch} 要注意 · `
-    + `${summary.bad} 坏了 · ${summary.unknown} 判不出`;
+
+  // 过滤条件没命中 ≠ 没鱼（D6b P7）：这时说「没扫到任何在跑的鱼」是假话
+  if (summary.fish === 0 && context.filterMiss) {
+    const template = templateOf(rules, 'filterMissTemplate',
+      '过滤条件「{name}」没匹配到鱼（本次扫到 {count} 条）——真名见 stderr，改一下 --fish。');
+    return {
+      verdict: fill(template, { name: context.filterMiss.name, count: context.filterMiss.scanned }),
+      order,
+      traceNote: null,
+    };
+  }
   if (summary.fish === 0) {
-    const template = rules?.rollup?.missingFishTemplate
-      ?? '没扫到任何在跑的鱼。先确认她真的在跑（ps aux | grep -i <她的名字>），再用 --root <她的目录> 指定她的窝。';
-    return { verdict: template, note: null, order };
+    return {
+      verdict: templateOf(rules, 'missingFishTemplate',
+        '没扫到鱼。确认她在跑（ps aux | grep -i <她的名字>），再用 --root <她的目录> 指窝。'),
+      order,
+      traceNote: null,
+    };
   }
+
+  const cellPrefix = templateOf(rules, 'verdictCellPrefix', '六格口径：');
+  const base = `${summary.fish} 条鱼 · ${cellPrefix}${summary.ok} 正常 · ${summary.watch} 要注意 · `
+    + `${summary.bad} 坏了 · ${summary.unknown} 判不出`;
+
+  const notes = [];
   if (summary.unknown > 0) {
-    const template = rules?.rollup?.unknownNoteTemplate ?? '{unknown} 项判不出来 —— 这些不是正常，是没看到。';
-    return { verdict: base, note: fill(template, { unknown: summary.unknown }), order };
+    notes.push(fill(templateOf(rules, 'unknownNoteTemplate', '这些项不是正常，是没看到。'), {
+      unknown: summary.unknown,
+    }));
   }
-  return { verdict: base, note: null, order };
+  let traceNote = null;
+  const noTraceCandidates = isFiniteNumber(context.noTraceCandidates) ? context.noTraceCandidates : 0;
+  if (noTraceCandidates > 0) {
+    // A 版：「像鱼但没有任何运行痕迹」—— 界面组件就长这样，别让用户以为她挂了
+    const template = context.allNoTraceArePlugins
+      ? templateOf(rules, 'unknownNoTraceTemplate',
+        '找到 {count} 个名字像鱼的插件，但没有任何运行痕迹（无日志/无判重表/无会话），可能只是界面组件。')
+      : templateOf(rules, 'unknownNoTraceGenericTemplate',
+        '找到 {count} 条名字像鱼的候选，但没有任何运行痕迹（无日志/无判重表/无会话），可能只是目录占位。');
+    traceNote = fill(template, { count: noTraceCandidates });
+    notes.push(traceNote);
+  }
+  // 中文句子之间不加空格：`这些项不是正常…。 找到 2 个…` 中间那个空格很刺眼
+  return { verdict: notes.length > 0 ? `${base}。${notes.join('')}` : base, order, traceNote };
 }
 
-function buildNextAction(rules, fishes, summary) {
+function buildNextAction(rules, fishes, summary, context = {}) {
+  if (summary.fish === 0 && context.filterMiss) {
+    return templateOf(rules, 'filterMissActionTemplate', '改一下 --fish 的写法（本次扫到的真名见 stderr）。');
+  }
   if (summary.fish === 0) {
-    return '先跑 ps aux | grep -i <她的名字> 确认她还在跑；确认在跑，再用 --root <她的目录> 指定她的窝。';
+    return templateOf(rules, 'missingFishActionTemplate',
+      '先跑 ps aux | grep -i <她的名字> 确认她还在跑；确认在跑，再用 --root <她的目录> 指窝。');
   }
   const target = fishes.find((fish) => Array.isArray(fish.fixes) && fish.fixes.length > 0) ?? null;
   if (!target) {
@@ -756,9 +938,14 @@ function buildFootnote(rules, fishes) {
     for (const item of fish.degraded) all.push(item);
   }
   if (all.length === 0) return { footnote: null, degradedCount: 0 };
-  const indicators = [...new Set(all.map((item) => item.indicator))];
-  const template = rules?.rollup?.degradedFootnoteTemplate
-    ?? '{count} 项数据读不到（{indicators}），这些项目不能当作正常。';
+  // 指标 id 是机器词（liveness / rhythm…），脚注是给人看的（D6b P6）：一律换中文格名
+  const indicators = [...new Set(all.map((item) => item.indicator))]
+    .map((id) => {
+      const nameZh = rules?.indicators?.[id]?.nameZh;
+      return typeof nameZh === 'string' && nameZh !== '' ? nameZh : String(id);
+    });
+  const template = templateOf(rules, 'degradedFootnoteTemplate',
+    '{count} 项数据读不到（{indicators}），不能当正常。');
   return {
     footnote: fill(template, { count: all.length, indicators: indicators.join('、') }),
     degradedCount: all.length,
@@ -824,7 +1011,40 @@ export function evaluate(pondData, options = {}) {
   });
 
   const summary = countIndicators(rules, sorted);
-  const { verdict, note } = buildVerdict(rules, summary);
+
+  // 鱼级分桶（关键格口径）与 trace 统计：三处渲染（text 统计行 / html 四灯 / 本层）
+  // 都从这里取，保证「四格有结论、两格判不出」的鱼在三处都是「活跃」，不会一处活跃一处认不出。
+  const fishBuckets = { ok: 0, watch: 0, bad: 0, unknown: 0 };
+  const traceCounts = { none: 0, unreadable: 0, present: 0 };
+  let allNoTraceArePlugins = true;
+  let noTraceCandidates = 0;
+  for (const fish of sorted) {
+    const bucket = classifyFishBucket(fish);
+    fishBuckets[bucket] += 1;
+    const trace = fish.trace === 'none' || fish.trace === 'unreadable' || fish.trace === 'present'
+      ? fish.trace
+      : 'none';
+    traceCounts[trace] += 1;
+    // A 版话术说的是「扫描找到的名字像鱼的候选」——用户用 --root/--log 亲手指过来的窝不算候选，
+    // 那种情况由 traceNoneAfterRootTemplate（查路径/权限）负责，说「可能只是目录占位」反而误导。
+    if (trace === 'none' && fish.rootHinted !== true) {
+      noTraceCandidates += 1;
+      if (!String(fish.kind ?? '').startsWith('dsh')) allNoTraceArePlugins = false;
+    }
+  }
+
+  const context = {
+    filterMiss: isObject(opts.filterMiss) ? opts.filterMiss : null,
+    traceCounts,
+    noTraceCandidates,
+    allNoTraceArePlugins,
+  };
+  // 「认不出」= 关键两格都判不出，不是「没有这条鱼」：这句话给文本摘要垫在统计行前面，
+  // 免得用户把 4 个词里的「认不出」读成「鱼不见了」。
+  const bucketNote = fishBuckets.unknown > 0
+    ? fill(templateOf(rules, 'unknownBucketNoteTemplate', '认不出 = 存活与工作量两格都判不出（不是没这条鱼）。'), {})
+    : null;
+  const { verdict, traceNote } = buildVerdict(rules, summary, context);
   const { footnote, degradedCount } = buildFootnote(rules, sorted);
 
   return {
@@ -833,8 +1053,13 @@ export function evaluate(pondData, options = {}) {
     host: { platform: process.platform, node: process.versions.node },
     fishes: sorted,
     summary,
-    verdict: note ? `${verdict}。${note}` : verdict,
-    nextAction: buildNextAction(rules, sorted, summary),
+    // 鱼级分桶（按关键格）；summary 仍然是六格口径，两者都留着，别互相顶替
+    fishBuckets,
+    traceCounts,
+    bucketNote,
+    traceNote,
+    verdict,
+    nextAction: buildNextAction(rules, sorted, summary, context),
     footnote,
     degradedCount,
     skippedSensitive: { count: sumSkippedSensitive(ponds), names: SENSITIVE_PATH_TOKEN },

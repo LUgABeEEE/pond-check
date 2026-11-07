@@ -54,9 +54,20 @@
       "watch",
       "ok"
     ],
-    "unknownNoteTemplate": "{unknown} 项判不出来 —— 这些不是正常，是没看到。",
-    "missingFishTemplate": "没扫到任何在跑的鱼。先确认她真的在跑（ps aux | grep -i <她的名字>），再用 --root <她的目录> 指定她的窝。",
-    "degradedFootnoteTemplate": "{count} 项数据读不到（{indicators}），这些项目不能当作正常。",
+    "unknownNoteTemplate": "这些项不是正常，是没看到。",
+    "missingFishTemplate": "没扫到鱼。确认她在跑（ps aux | grep -i <她的名字>），再用 --root <她的目录> 指窝。",
+    "missingFishActionTemplate": "先确认她在跑（ps aux | grep -i <她的名字>），再用 --root 指窝。",
+    "degradedFootnoteTemplate": "{count} 项数据读不到（{indicators}），不能当正常。",
+    "verdictCellPrefix": "六格口径：",
+    "filterMissTemplate": "过滤条件「{name}」没匹配到鱼（本次扫到 {count} 条）——真名见 stderr，改一下 --fish。",
+    "filterMissActionTemplate": "改一下 --fish 的写法（本次扫到的真名见 stderr）。",
+    "unknownNoTraceTemplate": "找到 {count} 个名字像鱼的插件，但没有任何运行痕迹（无日志/无判重表/无会话），可能只是界面组件。",
+    "unknownNoTraceGenericTemplate": "找到 {count} 条名字像鱼的候选，但没有任何运行痕迹（无日志/无判重表/无会话），可能只是目录占位。",
+    "unknownUnreadableTraceTemplate": "找到了运行痕迹但读不到内容，可能是权限或路径不匹配，试试 --root <她的目录>。",
+    "unknownUnreadableTraceShort": "试试 --root，可能权限不对",
+    "traceNoneAfterRootTemplate": "窝已指定但里面真的读不到：检查路径对不对、权限够不够、日志是不是真的写在这里。",
+    "traceNoneAfterRootShort": "查路径/权限/日志在不在",
+    "unknownBucketNoteTemplate": "认不出 = 存活与工作量两格都判不出（不是没这条鱼）。",
     "maxFixesPerFish": 3
   },
   "credentials": {
@@ -442,6 +453,7 @@
           "severity": "ok",
           "phenomenon": "她 {ageHuman} 前还在动，是活的。",
           "nextStep": "不用管，继续养。",
+          "fixShort": "不用管，继续养。",
           "vars": [
             "ageHuman"
           ]
@@ -450,6 +462,7 @@
           "severity": "watch",
           "phenomenon": "她今天醒过，但已经 {ageHuman} 没动静了，比平时安静。",
           "nextStep": "先等到今天收工再看一眼；如果明天还是这么安静，去看「健康」那栏有没有报错。",
+          "fixShort": "明天还静就看「健康」",
           "vars": [
             "ageHuman"
           ]
@@ -458,6 +471,7 @@
           "severity": "watch",
           "phenomenon": "她已经 {ageDays} 天没动过了 —— 可能在休息，也可能卡住了。",
           "nextStep": "打开她的日志看最后一行是什么时候；然后重启一次再观察半天，还不动就查「依赖」那栏缺什么。",
+          "fixShort": "看日志最后一行再重启观察",
           "vars": [
             "ageDays"
           ]
@@ -466,6 +480,7 @@
           "severity": "bad",
           "phenomenon": "她从 {ageDays} 天前就没再动过，基本可以认定停了。",
           "nextStep": "先看进程还在不在：不在就按启动命令拉起来；还在就翻日志最后的报错，十有八九是登录过期或依赖缺失。",
+          "fixShort": "进程不在就按启动命令拉起",
           "vars": [
             "ageDays"
           ]
@@ -473,7 +488,8 @@
         "unknown": {
           "severity": "unknown",
           "phenomenon": "读不到她任何活动记录，判不出死活（不是正常）。",
-          "nextStep": "指明她的窝：pond-check --fish <名字> --root <她的目录>；或者告诉体检她的日志放在哪个位置。",
+          "nextStep": "指明她的窝：pond-check --root <她的目录>。",
+          "fixShort": "用 --root 指明她的窝",
           "vars": []
         }
       },
@@ -571,6 +587,7 @@
           "severity": "ok",
           "phenomenon": "近 7 天有 {activeDays} 天醒来，平均每天 {avgPerDay} 次，作息是稳的。",
           "nextStep": "保持现状，不用动。",
+          "fixShort": "保持现状",
           "vars": [
             "activeDays",
             "avgPerDay"
@@ -580,14 +597,16 @@
           "severity": "watch",
           "phenomenon": "近 7 天只有 {activeDays} 天醒来过，节律开始散了。",
           "nextStep": "先想一下是不是你自己手动开她的次数少了；如果是自动跑的，去看定时任务/常驻进程还在不在（crontab -l、systemctl --user list-timers）。",
+          "fixShort": "查 crontab 定时任务",
           "vars": [
             "activeDays"
           ]
         },
         "sparse": {
           "severity": "bad",
-          "phenomenon": "近 7 天只醒了 {activeDays} 天，基本是在偶尔挣扎一下。",
+          "phenomenon": "近 7 天只醒了 {activeDays} 天，只是偶尔挣扎一下。",
           "nextStep": "当成「快停了」处理：先看「存活」「健康」两栏，再看「依赖」第一项（ffmpeg）是不是缺了。",
+          "fixShort": "先看「存活」「健康」两栏",
           "vars": [
             "activeDays"
           ]
@@ -596,12 +615,14 @@
           "severity": "bad",
           "phenomenon": "近 7 天一次都没醒。",
           "nextStep": "先看「存活」那栏：它要是也判 dead，就当已经停了，按启动命令拉起来。",
+          "fixShort": "先看「存活」是否也是 dead",
           "vars": []
         },
         "unknown": {
           "severity": "unknown",
           "phenomenon": "没有一条带时间戳的记录，算不出节律（不是规律）。",
           "nextStep": "让她的日志按天切割（大多数 bot 框架都有这个开关），或者保留 session 文件别清；有按天记录体检才数得出来。",
+          "fixShort": "日志按天切割、别清 session",
           "vars": []
         }
       },
@@ -699,6 +720,7 @@
           "severity": "ok",
           "phenomenon": "今天新处理了 {todayNew} 条，累计 {totalEntries} 条。",
           "nextStep": "不用动，她正常在出货。",
+          "fixShort": "不用动",
           "vars": [
             "todayNew",
             "totalEntries"
@@ -708,6 +730,7 @@
           "severity": "watch",
           "phenomenon": "今天还没新增，累计 {totalEntries} 条 —— 可能今天本来就没活，也可能卡住了。",
           "nextStep": "先看「存活」「健康」：两栏都正常就只是今天没内容；「健康」报了错那就是卡住了，按那栏的提示处理。",
+          "fixShort": "看「存活」「健康」两栏",
           "vars": [
             "totalEntries"
           ]
@@ -715,7 +738,8 @@
         "stalled": {
           "severity": "bad",
           "phenomenon": "已经 {daysSinceLastNew} 天没有新增了，判重表停在第 {totalEntries} 条。",
-          "nextStep": "翻日志最后 20 行：最常见就两种 —— 登录失效（412/验证码）或源站根本没更新。前者按「健康」那栏重新登录。",
+          "nextStep": "翻日志最后 20 行：最常见就两种 —— 登录失效（412/验证码）或源站根本没更新。前者按「健康」那栏重新登录；源站没更新就不用管，等她下次有货。",
+          "fixShort": "翻日志最后 20 行",
           "vars": [
             "daysSinceLastNew",
             "totalEntries"
@@ -725,12 +749,14 @@
           "severity": "bad",
           "phenomenon": "判重表是空的，或者压根没有 —— 她可能一次都没成功干过活。",
           "nextStep": "先查「依赖」那栏（ffmpeg 在不在、登录有没有配），然后手动触发一次，看第一条记录能不能写进去。",
+          "fixShort": "先补依赖，再手动触发一次",
           "vars": []
         },
         "unknown": {
           "severity": "unknown",
           "phenomenon": "找不到判重表，也不知道她干了多少（不是「干得挺好」）。",
-          "nextStep": "指明她的数据目录：--root <她的目录>；如果这鱼本来就不落账，那工作量只能长期是 unknown，报告会照实写。",
+          "nextStep": "指明她的数据目录：--root <她的目录>；如果这鱼本来就不落账，那工作量只能长期判不出，报告会照实写。",
+          "fixShort": "用 --root 指数据目录",
           "vars": []
         }
       },
@@ -742,8 +768,9 @@
       "variants": {
         "noTimestamps": {
           "status": "unknown",
-          "phenomenon": "判重表找到了，但里面没有时间戳，算不出今天新增了多少",
-          "nextStep": "这条鱼可能用了不带时间的判重格式。看总条目数就行，今天新增这一项这次跳过。"
+          "phenomenon": "判重表找到了，但里面没有时间戳，算不出今天新增了多少。",
+          "nextStep": "这条鱼可能用了不带时间的判重格式。看总条目数就行，今天新增这一项这次跳过。",
+          "fixShort": "看总条目数就行，今天新增这次跳过"
         }
       }
     },
@@ -843,7 +870,8 @@
               "unauthorized",
               "invalid csrf"
             ],
-            "fix": "重新登录一次，把新的 cookie/token 存回原来的位置，然后重启她。"
+            "fix": "重新登录一次，把新的 cookie/token 存回原来的位置，然后重启她。",
+            "fixShort": "重新登录存回 cookie 再重启"
           },
           {
             "id": "riskControl",
@@ -859,7 +887,8 @@
               "Forbidden",
               "access denied"
             ],
-            "fix": "B 站一类的 412 通常是 cookie 或请求特征被拦：换新 cookie，把请求间隔调大（比如 5s 以上），再试。"
+            "fix": "B 站一类的 412 通常是 cookie 或请求特征被拦：换新 cookie，把请求间隔调大（比如 5s 以上），再试。",
+            "fixShort": "换新 cookie、调大请求间隔再试"
           },
           {
             "id": "rateLimited",
@@ -872,7 +901,8 @@
               "请求过于频繁",
               "操作频繁"
             ],
-            "fix": "调大请求间隔或减少并发；限流期间继续硬跑只会越限越久。"
+            "fix": "调大请求间隔或减少并发；限流期间继续硬跑只会越限越久。",
+            "fixShort": "调大间隔或减少并发"
           },
           {
             "id": "captcha",
@@ -886,7 +916,8 @@
               "极验",
               "人机验证"
             ],
-            "fix": "验证码得人工过一次：手动登录、过掉验证码、存好新登录态，再让她继续跑。"
+            "fix": "验证码得人工过一次：手动登录、过掉验证码、存好新登录态，再让她继续跑。",
+            "fixShort": "手动过一次验证码再存登录态"
           },
           {
             "id": "breaker",
@@ -901,7 +932,8 @@
               "暂停发送",
               "too many failures"
             ],
-            "fix": "她触发了自己的熔断保护：先查清触发它的那条错误，修好之后再重启（或等冷却时间结束）让她复位。"
+            "fix": "她触发了自己的熔断保护：先查清触发它的那条错误，修好之后再重启（或等冷却时间结束）让她复位。",
+            "fixShort": "先修触发熔断的那条错误"
           },
           {
             "id": "runtimeError",
@@ -918,7 +950,8 @@
               "FATAL",
               "致命"
             ],
-            "fix": "把报错下面那几行 traceback 原样贴出来查；同一句反复刷就说明每次都失败。"
+            "fix": "把报错下面那几行 traceback 原样贴出来查；同一句反复刷就说明每次都失败。",
+            "fixShort": "把报错下面几行贴出来查"
           },
           {
             "id": "ioError",
@@ -935,7 +968,8 @@
               "磁盘",
               "disk full"
             ],
-            "fix": "看路径和权限：ENOENT 是文件没装/挪走了（比如 ffmpeg），EACCES 是权限不对，ECONNREFUSED 是依赖的服务没起。"
+            "fix": "看路径和权限：ENOENT 是文件没装/挪走了（比如 ffmpeg），EACCES 是权限不对，ECONNREFUSED 是依赖的服务没起。",
+            "fixShort": "按 ENOENT/EACCES/连接拒绝分别修"
           }
         ]
       },
@@ -944,12 +978,14 @@
           "severity": "ok",
           "phenomenon": "最近 24 小时日志里没看到报错。",
           "nextStep": "不用动。",
+          "fixShort": "不用动",
           "vars": []
         },
         "noisy": {
           "severity": "watch",
           "phenomenon": "最近 24 小时有 {softHits} 条小报错（{topCategoryZh} 为主），但还在转。",
           "nextStep": "可以先不管；如果同一句话反复刷，把那一行原样发出来再查。",
+          "fixShort": "同一句反复刷就把那行发出来",
           "vars": [
             "softHits",
             "topCategoryZh"
@@ -959,6 +995,7 @@
           "severity": "bad",
           "phenomenon": "日志里在报警：{topCategoryZh} 命中 {hardHits} 次，她现在发的东西大概率是失败的。",
           "nextStep": "按类别处理：{fixHint}",
+          "fixShort": "按命中的类别逐条修",
           "vars": [
             "topCategoryZh",
             "hardHits",
@@ -968,7 +1005,8 @@
         "critical": {
           "severity": "bad",
           "phenomenon": "已经明确挂了：{topCategoryZh} 命中 {hardHits} 次，她现在什么都发不出去。",
-          "nextStep": "现在就按这个修：{fixHint} 修完重启她，然后盯 10 分钟日志，还在刷同一句就把日志贴出来。",
+          "nextStep": "现在就按这个修：{fixHint}修完重启她，然后盯 10 分钟日志，还在刷同一句就把日志贴出来。",
+          "fixShort": "换新 cookie、调大间隔后重启",
           "vars": [
             "topCategoryZh",
             "hardHits",
@@ -978,7 +1016,8 @@
         "unknown": {
           "severity": "unknown",
           "phenomenon": "读不到日志，健康状况未知（不是健康）。",
-          "nextStep": "用 --log <她的日志文件> 指定日志位置，或 --root <她的安装目录> 让她自己找；找不到日志的鱼，健康分永远是 unknown。",
+          "nextStep": "用 --root <她的安装目录> 指定她的窝让她自己找日志；找不到日志的鱼，健康分永远判不出。",
+          "fixShort": "用 --root 找日志",
           "vars": []
         }
       },
@@ -1076,7 +1115,8 @@
             "pass": "找到且可执行",
             "fail": "找不到（该 kind 不产视频时降为 warn）",
             "detailTemplate": "ffmpeg {status}；版本 {version}",
-            "fix": "apt install ffmpeg（Debian/Ubuntu）或 brew install ffmpeg（macOS）；装完跑一次 ffmpeg -version 确认。"
+            "fix": "apt install ffmpeg（Debian/Ubuntu）或 brew install ffmpeg（macOS）；装完跑一次 ffmpeg -version 确认。",
+            "fixShort": "apt install ffmpeg 后 ffmpeg -version"
           },
           {
             "id": "nodeRuntime",
@@ -1087,7 +1127,8 @@
             "fail": "主版本 < nodeMinMajor",
             "warn": "版本取不到（--no-exec 或无法执行）",
             "detailTemplate": "Node {version}",
-            "fix": "用 nvm 切到 22 以上：nvm install 22 && nvm use 22，然后重启她。"
+            "fix": "用 nvm 切到 22 以上：nvm install 22 && nvm use 22，然后重启她。",
+            "fixShort": "nvm install 22 && nvm use 22"
           },
           {
             "id": "credentialFreshness",
@@ -1101,7 +1142,8 @@
             "privacy": "只输出天数，绝不输出路径或文件名",
             "fix": "登录态大概率过期了：重新登录一次，把新的 cookie/token 存回原处，再重启她。",
             "unknown": "白名单里的凭据文件一个都不存在 —— 这条鱼可能根本不需要登录态（桌面宠物、纯 DSH 插件），或登录态存在别处",
-            "note": "「没找到白名单文件」是事实，「登录一定坏了」是推断。工具只报事实，所以降为 unknown。"
+            "note": "「没找到白名单文件」是事实，「登录一定坏了」是推断。工具只报事实，所以降为 unknown。",
+            "fixShort": "重新登录，把 cookie 存回原处再重启"
           },
           {
             "id": "homeWritable",
@@ -1112,7 +1154,8 @@
             "fail": "不可写",
             "detailTemplate": "窝目录{status}",
             "privacy": "不写入任何字节，只做 access(W_OK)",
-            "fix": "目录权限不对：chmod u+w <她的目录>，或用 sudo chown $(whoami) <她的目录> 把属主改回自己。"
+            "fix": "目录权限不对：chmod u+w <她的目录>，或用 sudo chown $(whoami) <她的目录> 把属主改回自己。",
+            "fixShort": "chmod u+w <她的目录>"
           },
           {
             "id": "modelLine",
@@ -1128,7 +1171,8 @@
             "fail": "全部缺失或为空",
             "detailTemplate": "模型线路{status}",
             "privacy": "只看字段存在与否，字段值一律不落结果",
-            "fix": "在配置里填上模型线路（provider / apiBase / model 三项），或用她的登录命令重新授权。"
+            "fix": "在配置里填上模型线路（provider / apiBase / model 三项），或用她的登录命令重新授权。",
+            "fixShort": "配置里补 provider / apiBase / model"
           },
           {
             "id": "diskSpace",
@@ -1139,7 +1183,8 @@
             "warnFreeBytesAtLeastRef": "diskFailFreeBytes",
             "fail": "剩余 < diskFailFreeBytes",
             "detailTemplate": "剩余空间 {freeHuman}",
-            "fix": "清空间：先清 logs/ 里 7 天前的旧日志和 tmp/ 缓存，别删判重表。"
+            "fix": "清空间：先清 logs/ 里 7 天前的旧日志和 tmp/ 缓存，别删判重表。",
+            "fixShort": "清 logs/ 旧日志和 tmp/ 缓存"
           }
         ]
       },
@@ -1148,12 +1193,14 @@
           "severity": "ok",
           "phenomenon": "依赖齐全：ffmpeg、Node、登录态、窝可写、模型线路、磁盘都正常。",
           "nextStep": "不用动。她要是还不干活，那就是「健康」或「工作量」那栏的问题。",
+          "fixShort": "不用动",
           "vars": []
         },
         "warn": {
           "severity": "watch",
           "phenomenon": "有 {warnCount} 项需要留意：{failedChecksZh}。现在还能跑，但迟早绊到。",
           "nextStep": "按下面每条给的办法补：{fixHint}",
+          "fixShort": "照每条 fix 补",
           "vars": [
             "warnCount",
             "failedChecksZh",
@@ -1163,7 +1210,8 @@
         "broken": {
           "severity": "bad",
           "phenomenon": "有 {failCount} 项已经坏了：{failedChecksZh}。她现在跑不起来或者跑起来也白跑。",
-          "nextStep": "照着补，一条一条来：{fixHint} 补完再体检一次确认。",
+          "nextStep": "照着补，一条一条来：{fixHint}补完再体检一次确认。",
+          "fixShort": "照每条 fix 补，补完再体检",
           "vars": [
             "failCount",
             "failedChecksZh",
@@ -1174,6 +1222,7 @@
           "severity": "unknown",
           "phenomenon": "有 {unknownCount} 项查不出来（缺路径或没权限），不能当成正常。",
           "nextStep": "先定位她的窝：--root <她的目录>；窝找到了，这六项大多就能查。",
+          "fixShort": "用 --root 定位她的窝",
           "vars": [
             "unknownCount"
           ]
@@ -1284,6 +1333,7 @@
           "severity": "ok",
           "phenomenon": "配置版本 v{configSchemaVersion} 和程序对得上，也没有残留的旧字段。",
           "nextStep": "不用动。",
+          "fixShort": "不用动",
           "vars": [
             "configSchemaVersion"
           ]
@@ -1292,6 +1342,7 @@
           "severity": "bad",
           "phenomenon": "配置还是旧格式（v{configSchemaVersion}，程序要 v{expectedSchemaVersion}），有 {staleFieldHits} 个字段已经被改名了。",
           "nextStep": "先备份配置，再跑一次她的迁移命令；没有迁移命令就按改名表手动改（比如 {firstStaleField} 换成新名字），改完重启她。",
+          "fixShort": "先备份配置，再跑迁移命令",
           "vars": [
             "configSchemaVersion",
             "expectedSchemaVersion",
@@ -1303,6 +1354,7 @@
           "severity": "bad",
           "phenomenon": "配置比程序新（配置 v{configSchemaVersion} > 程序支持的 v{expectedSchemaVersion}）—— 你升过配置但没升程序。",
           "nextStep": "把程序升到配套版本；升不了就把配置回滚到上一份备份，二选一，别让它带着旧程序读新配置。",
+          "fixShort": "升程序或回滚配置，二选一",
           "vars": [
             "configSchemaVersion",
             "expectedSchemaVersion"
@@ -1311,13 +1363,15 @@
         "unknown": {
           "severity": "unknown",
           "phenomenon": "这份配置里没有版本号，判断不了漂没漂（不是「没漂」）。",
-          "nextStep": "在配置里加一行 schemaVersion，或者用 --expect-schema 3 告诉体检你期望的版本。",
+          "nextStep": "在配置里加一行 schemaVersion（版本号看她的程序文档）。",
+          "fixShort": "配置里加一行 schemaVersion",
           "vars": []
         },
         "renames_unchecked": {
           "status": "unknown",
-          "phenomenon": "改名表还没核对过，看不出有没有残留旧字段",
-          "nextStep": "这不算问题：等你确信配置是最新的，或手动比对一次配置键名即可。"
+          "phenomenon": "改名表还没核对过，看不出有没有残留旧字段。",
+          "nextStep": "这不算问题：等你确信配置是最新的，或手动比对一次配置键名即可。",
+          "fixShort": "确信配置最新即可"
         }
       },
       "unknownWhen": [

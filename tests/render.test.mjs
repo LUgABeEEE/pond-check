@@ -229,6 +229,7 @@ test('JSON：顶层字段序固定、可回读、meta 齐全', () => {
   const parsed = JSON.parse(json);
   assert.deepEqual(Object.keys(buildJsonReport(report)), [
     'schemaVersion', 'meta', 'host', 'fishes', 'summary',
+    'fishBuckets', 'traceCounts', 'bucketNote', 'traceNote',
     'verdict', 'nextAction', 'footnote', 'degradedCount', 'skippedSensitive',
   ]);
   assert.equal(parsed.meta.scanCount, 2);
