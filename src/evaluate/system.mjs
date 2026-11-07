@@ -71,18 +71,17 @@ const SECONDS_PER_DAY = 24 * SECONDS_PER_HOUR;
 const MAX_CONFIG_BYTES = 32 * 1024 * 1024;
 
 /**
- * 日志「窗口过期」的附注（当日志最后一条早于 windowHours 时追加到 healthy 话术后面）。
+ * 日志「窗口过期」的话术来源：rules.indicators.health.variants.windowStale。
  *
  * 为什么需要它：health 的 bands 只数 hardHits / softHits（SPEC §4.4），而读取窗口是
  * 日志尾部若干字节 —— 如果这条鱼五天前就停了，尾部里的 0 次报错会被判成 clean，
  * 而 clean 的话术是「最近 24 小时日志里没看到报错」，这句话在没有 24h 内日志时是假的。
- * 这里不改档位（不发明新 level），只在话术后面把话说全，并留 evidence.windowStale。
+ * 这里不改档位（不发明新 level），只在话术里把话说全，并留 evidence.windowStale。
+ *
+ * D8-L5：`nextStep` 必须**替换**档位原话术，不能拼在 clean 的「不用动。」后面 ——
+ * 否则会输出「不用动。先看『存活』那栏……」这种自相矛盾的话。文案本身放 rules.json，
+ * 本文件不再硬编码副本。
  */
-const STALE_WINDOW_CAVEAT = Object.freeze({
-  phenomenon: '（注意：日志最后一条是 {ageHuman}前写的，最近 {windowHours} 小时她根本没写日志 —— '
-    + '上面的结论只反映更早的那段日志，不等于「最近没出事」。）',
-  nextStep: '先看「存活」那栏确认她还在跑；等她重新写日志、日志有了新内容，再体检一次健康。',
-});
 
 /* ------------------------------------------------------------------ *
  * 1. rules.json：唯一阈值来源
@@ -535,13 +534,20 @@ export function evaluateHealth(pondData = {}, options = {}) {
     }
   }
 
-  // 日志停在窗口之外（见文件头 STALE_WINDOW_CAVEAT 的说明）
+  // 日志停在窗口之外（见文件头 windowStale 的说明）
+  //
+  // D8-L5：nextStep 是**替换**，不是拼接。clean 的原话术是「不用动。」，
+  // 拼接会得到「不用动。先看『存活』那栏…」—— 前后自相矛盾。
+  // 文案缺失时也不许回退成拼接：保留档位原话术即可，宁可不全，不能自相矛盾。
   if (windowStale) {
-    phenomenon += fillTemplate(STALE_WINDOW_CAVEAT.phenomenon, {
-      ageHuman: humanAge(logAgeSec),
-      windowHours,
-    }, `${spec.id}:stale`);
-    nextStep += STALE_WINDOW_CAVEAT.nextStep;
+    const staleVariant = spec?.variants?.windowStale;
+    const staleVars = { ageHuman: humanAge(logAgeSec), windowHours };
+    if (typeof staleVariant?.phenomenonSuffix === 'string' && staleVariant.phenomenonSuffix !== '') {
+      phenomenon += fillTemplate(staleVariant.phenomenonSuffix, staleVars, `${spec.id}:windowStale`);
+    }
+    if (typeof staleVariant?.nextStepTemplate === 'string' && staleVariant.nextStepTemplate !== '') {
+      nextStep = fillTemplate(staleVariant.nextStepTemplate, staleVars, `${spec.id}:windowStale`);
+    }
   }
 
   return {

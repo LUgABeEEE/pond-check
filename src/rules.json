@@ -142,6 +142,19 @@
       ".password-store",
       "secrets",
       ".pki",
+      "*cred",
+      "*creds",
+      "*cred-*",
+      "*creds-*",
+      "*cred_*",
+      "*creds_*",
+      "*cert",
+      "*certs",
+      "*cert-*",
+      "*certs-*",
+      "*cert_*",
+      "*certs_*",
+      "certificat*",
       ".npm",
       ".config/gcloud",
       ".config/gh",
@@ -1041,6 +1054,11 @@
           "phenomenon": "日志太大了，这次只看了最后一段（覆盖 {coveredHours} 小时，不到 24 小时），所以「没看到报错」不等于「真的没报错」。",
           "nextStep": "想真正确认最近一天的健康状况：把日志按天切开或调大日志上限，再跑一次；急着排查就直接 grep 一下日志里的 412/429。",
           "fixShort": "日志被截断，健康判不出"
+        },
+        "windowStale": {
+          "note": "日志最后一条早于 windowHours 时使用：phenomenonSuffix 追加在现象后面，nextStepTemplate 用来**替换**档位原话术（不许拼接，否则会出「不用动。先看『存活』…」这种自相矛盾）。",
+          "phenomenonSuffix": "（注意：日志最后一条是 {ageHuman}前写的，最近 {windowHours} 小时她根本没写日志 —— 上面的结论只反映更早的那段日志，不等于「最近没出事」。）",
+          "nextStepTemplate": "先看「存活」那栏确认她还在跑；等她重新写日志、日志有了新内容，再体检一次健康。"
         }
       }
     },

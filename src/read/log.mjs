@@ -169,13 +169,27 @@ const CATEGORY_CACHE = loadKeywordCategories();
 /* ------------------------------------------------------------------ *
  * 关键词匹配
  *
- * 纯数字关键词（401 / 412 / 429 / -412）用「前后不是数字或点」的边界匹配：
- * 否则 `sleep 4121ms`、`build 1.412.0` 都会被算成风控命中，把「健康」栏
- * 直接推到 critical —— 这种假报警比漏报更伤信任。其余关键词按大小写不敏感子串。
+ * 纯数字关键词（401 / 403 / 412 / 429 / -412）必须是**独立 token** 才算命中：
+ * 前后不能紧邻字母、数字、下划线，也不能紧邻 `. = @ / \ -` 这些把数字黏进
+ * 版本号 / 键值对 / 路径 / 标识符的符号（D8-L6）。
+ *
+ *   BV412 / ?aid=412 / video412 / item412   → 不算风控（假报警方向）
+ *   sleep 4121ms / version 1.412.0          → 不算风控
+ *   ERROR HTTP 412 Precondition Failed      → 算（前后是空白）
+ *   返回412，已停止                          → 算（中文是分隔符，不是字母数字）
+ *
+ * 为什么连 `=` 也要排除：`?aid=412` 的 412 是查询参数值，不是状态码；只排
+ * `\d` / `.` 的旧写法会把它算成一次风控拦截。中文行文里数字常直接接汉字，
+ * 所以没有反过来收窄成「只允许空白/标点」—— 那样会漏掉真实的中文风控日志。
+ * 其余关键词仍按大小写不敏感子串匹配。
  * ------------------------------------------------------------------ */
 
 const NUMERIC_KEYWORD_RE = /^-?\d+$/;
 const REGEX_ESCAPE_RE = /[.*+?^${}()|[\]\\]/g;
+
+/** 数字关键词两侧的「黏连符」：出现即说明它不是独立 token。 */
+const NUMERIC_GLUE_LEFT = '(?<![\\w.=@/\\\\-])';
+const NUMERIC_GLUE_RIGHT = '(?![\\w.=@/\\\\-])';
 
 function escapeRegExp(text) {
   return text.replace(REGEX_ESCAPE_RE, '\\$&');
@@ -185,7 +199,11 @@ function compileCategory(category) {
   const matchers = category.keywords.map((keyword) => {
     const lower = keyword.toLowerCase();
     if (NUMERIC_KEYWORD_RE.test(lower)) {
-      return { keyword, lower, re: new RegExp(`(?<![\\d.])${escapeRegExp(lower)}(?![\\d.])`) };
+      return {
+        keyword,
+        lower,
+        re: new RegExp(`${NUMERIC_GLUE_LEFT}${escapeRegExp(lower)}${NUMERIC_GLUE_RIGHT}`),
+      };
     }
     return { keyword, lower, re: null };
   });
