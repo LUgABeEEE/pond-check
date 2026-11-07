@@ -9,6 +9,59 @@
 
 暂无变更。
 
+## [0.2.0] - 2026-11-08
+
+第二期：能力层（C1–C7）。`docs/CAPABILITIES-SPEC.md` 里那份「未实现的设计稿」现在全部落地了。
+
+**这是纯加法**：诊断层（`src/discover` `src/read` `src/evaluate` `src/render` `src/cli.mjs` `src/rules.json`）
+与 v0.1.1 逐字节一致，`pond-check` 的行为一个字节没变。能力层是可选的，体检不依赖它。
+
+393 tests 全绿（v0.1.1 是 167）。零运行时依赖仍成立——存储用内置 `node:sqlite`，网络用内置 `fetch`。
+
+### Added
+
+- **C1 能力基座** `src/shared/`：provider 注册表（priority 排序 + 描述校验）、append-only 事件流
+  `<POND_HOME>/events.jsonl`、按 capability 的成本记账、统一调用器（tts 30s / image 180s / memory 2s
+  超时；网络错重试 1 次退避 500ms；**401/403/429 不重试直接降级**；全失败抛 `CapabilityError` 带每个
+  provider 的失败原因）。降级成功的结果带 `degradedFrom`。
+- **C2 长期记忆** `src/memory/`：`node:sqlite` + FTS5。四类记忆 `fact` / `preference` / `episode` /
+  `relation`，半衰期 365 / 180 / 45 / 365 天。三道闸沉淀（候选抽取 → trigram Jaccard 0.75 去重合并
+  保 id → 重要性 1–5）。四因子召回 `0.40×相关度 + 0.25×新鲜度 + 0.25×重要性 − 0.10×重复惩罚`，
+  **每条结果带 `why` 分项**（召回不是黑盒）。CJK 检索做了 unigram+bigram 索引——FTS5 默认分词
+  查不到两字中文词，这个坑用测试钉住了。
+- **C3 加权唤醒** `src/wake/`：`weight = importance² × recency × silence`。`importance²` 让重要的事
+  权重压倒性高，`silence = min(1, 距上次提起天数 / 7)` 让很久没提的事浮上来。候选池四条
+  （重要性 ≥ 3、未归档、24h 内没提过、半衰期内）。频率控制：每日 3 次、间隔 4 小时、同 kind 每日 2 次。
+  `reason` 说人话（「重要（5 分）且 9 天未提」）。频率历史**从 events.jsonl 重放**，不另存计数器。
+- **C4 TTS** `src/tts/`：`speak()` / `providers()` / `voices()`。`edge`（云端免费，Sec-MS-GEC v2 令牌
+  对 `edge-tts 7.3.1` Python 实现逐向量对齐）+ `command`（本地 CLI，`execFile` + argv 模板，**不经 shell**）。
+  长文本按标点分段（≤300 字）后拼接；`estimated` 三档语义。
+- **C5 图生成** `src/image/`：`generate()` / `providers()`。`comfyui`（本地优先，不可达**静默降级**并标
+  `degradedFrom`）+ `openai-compat`。提示词防护分两套：对象模板在对象上替换（结构注入不可能）、
+  字符串模板按 `JSON.stringify` 转义，另加控制字符清除与 2000/800 字上限。`seedReproducible` 显式声明
+  能否复现。输出路径落在仓库内直接抛 `ImagePathError`。
+- **C6 云 adapter**：`doubao`（TTS + 图）、`seedream`（图）、`mimo`（TTS）。无 key 时 `available=false`
+  + `unavailableReason` 点名具体环境变量，**resolve 跳过而不是抛错**。「没配 key」（`POND_MISSING_KEY`）
+  与「配了但调用失败」（HTTP / 网络 / 格式 / 业务码）是两套错误分类。
+- **C7 架构守卫** `tests/isolation.test.mjs`：诊断层**不许 import** `memory|tts|image|wake`，
+  且连 `shared` 也不许（接缝是文件 `events.jsonl`，不是代码）。新目录默认按诊断层严格受管（fail-closed）。
+  另有整条诊断管线 fetch 调用数 = 0、POND_HOME 堆满状态再整删后报告逐字段一致、事件八字段容忍额外键。
+
+### Changed
+
+- 新鲜度公式：`exp(-days/halfLife)` → `0.5^(days/halfLife)`。原来的写法在 `days = halfLife` 时是
+  `1/e ≈ 0.368`，不叫半衰期；「365 天半衰期」实际 253 天就减半了。现在真的减半。
+- 记忆新增第四类 `relation`（人物关系，半衰期同 `fact`）——原任务书只写三类，与规格不符。
+- `package.json` 加 `exports` map：`./shared` `./memory` `./wake` `./tts` `./image`。
+- 源码守卫按层拆分：`node:http` 等网络模块仍**全域禁止**；`fetch`/`WebSocket` 只有五个能力目录可用。
+
+### Known issues
+
+- **云 adapter 只做了离线协议对齐，未对真实服务验证过。** `doubao` / `seedream` / `mimo` 的字段名、
+  endpoint、错误码都是照公开文档写的，零联网测试无法覆盖真实服务。首次使用请先冒烟一条最小请求
+  （一句短语音 / 一张小图）确认能通，再批量用。详见 `docs/CAPABILITIES-SPEC.md` §9.5。
+- 能力层需要 `node:sqlite`（Node 22 实验特性），启动时会打一条 `ExperimentalWarning`，不影响功能。
+
 ## [0.1.1] - 2026-11-07
 
 清掉 D8 审查（`docs/AUDIT-SUMMARY.md` §2）遗留的 6 条 medium + 8 条 low，共 14 条。
