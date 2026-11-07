@@ -266,7 +266,8 @@
         ],
         "purpose": "取版本号",
         "timeoutMs": 1000,
-        "disableWith": "--no-exec"
+        "enabledByDefault": false,
+        "disableNote": "外部命令默认不执行；需要版本号时才显式开启"
       },
       {
         "cmd": "node",
@@ -275,7 +276,8 @@
         ],
         "purpose": "取版本号",
         "timeoutMs": 1000,
-        "disableWith": "--no-exec"
+        "enabledByDefault": false,
+        "disableNote": "外部命令默认不执行；需要版本号时才显式开启"
       },
       {
         "cmd": "<pid exe>",
@@ -284,7 +286,8 @@
         ],
         "purpose": "取鱼的运行时版本",
         "timeoutMs": 1000,
-        "disableWith": "--no-exec"
+        "enabledByDefault": false,
+        "disableNote": "外部命令默认不执行；需要版本号时才显式开启"
       }
     ],
     "kinds": [
@@ -1125,7 +1128,7 @@
             "target": "node",
             "passMajorAtLeastRef": "nodeMinMajor",
             "fail": "主版本 < nodeMinMajor",
-            "warn": "版本取不到（--no-exec 或无法执行）",
+            "warn": "版本取不到（没开启外部命令或无法执行）",
             "detailTemplate": "Node {version}",
             "fix": "用 nvm 切到 22 以上：nvm install 22 && nvm use 22，然后重启她。",
             "fixShort": "nvm install 22 && nvm use 22"

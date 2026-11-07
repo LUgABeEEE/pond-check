@@ -178,7 +178,7 @@ CREATE VIRTUAL TABLE memories_fts USING fts5(
 | 1 | 猜测性内容（默认不记，除非用户要求） |
 
 **写入必须过闸**：`memory.remember()` 不接受「直接落库」，只接受候选 + 三闸结果。
-用户可以用 `--force` 跳过闸二，但跳过会被记进事件日志。
+用户可以用 `force: true` 选项跳过闸二，但跳过会被记进事件日志。
 
 ### 3.4 召回（read path）
 

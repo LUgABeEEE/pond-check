@@ -36,7 +36,7 @@
 
 1. **不联网**：不 import `node:http` / `node:https` / `node:net` / `node:dns` / `node:tls`，不发任何请求（包括「检查更新」）。
 2. **不读凭证内容**：命中 §2.2 清单的文件**连 `open` 都不做**，文件名也不进任何输出（详见 §2.3）。
-3. **不改任何东西**：不写用户目录、不装插件、不改配置、不启停任何鱼进程。唯一允许的执行是 §3.6 的只读版本探测（`ffmpeg -version`、`node --version`），且必须能被 `--no-exec` 关掉。
+3. **不改任何东西**：不写用户目录、不装插件、不改配置、不启停任何鱼进程。唯一允许的执行是 §3.6 的只读版本探测（`ffmpeg -version`、`node --version`），且**默认关闭**：不显式开启就不执行任何外部命令。
 
 ### 2.2 不读取的文件模式清单（`rules.json.credentials.skipFilePatterns`）
 
@@ -143,7 +143,7 @@ P4  报「没找到鱼」     一行结论 + 一行「你现在该做什么」�
 | 命令 | 用途 | 超时 | 关闭方式 |
 | --- | --- | --- | --- |
 | `ps -eo pid,ppid,lstart,command` | 仅 macOS 的进程表 | 2s | (无) |
-| `ffmpeg -version` | 取版本号 | 1s | `--no-exec` 后改用 PATH 查找（只能判「在不在」，版本 `unknown`） |
+| `ffmpeg -version` | 取版本号 | 1s | 不执行外部命令时改用 PATH 查找（只能判「在不在」，版本 `unknown`） |
 | `node --version` | 取版本号 | 1s | 同上 |
 | `<pid 的 exe> --version` | 探测鱼自己的运行时版本 | 1s | 同上 |
 | `git --version` | 仅当某鱼 kind 需要 | 1s | 同上 |
@@ -377,7 +377,7 @@ P4  报「没找到鱼」     一行结论 + 一行「你现在该做什么」�
 | aligned | 配置版本 v{configSchemaVersion} 和程序对得上，没有旧字段。 | 不用动。 |
 | drifted | 配置还是旧格式（v{configSchemaVersion}，程序要 v{expectedSchemaVersion}），有 {staleFieldHits} 个字段已经被改名了。 | 备份配置后跑一次她的迁移命令（或按 `renames` 表手动改名 `{firstStaleField}` → 新名字），改完重启她。 |
 | mismatch | 配置比程序新（配置 v{configSchemaVersion} > 程序支持的 v{expectedSchemaVersion}）—— 你升过配置但没升程序。 | 把程序升到配套版本；不能升就把配置回滚到上一份备份，二选一。 |
-| unknown | 这份配置里没有版本号，判断不了漂没漂（不是「没漂」）。 | 在配置里加一行 `schemaVersion`，或者用 `--expect-schema 3` 告诉体检你期望的版本。 |
+| unknown | 这份配置里没有版本号，判断不了漂没漂（不是「没漂」）。 | 在配置里加一行 `schemaVersion`，改完重启她。 |
 
 ---
 

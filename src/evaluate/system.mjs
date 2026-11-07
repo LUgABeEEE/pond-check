@@ -729,8 +729,8 @@ function buildCheck(check, ctx) {
         return { ...base, status: 'unknown', detail: render({ version: '查不出（没有依赖探测结果）' }) };
       }
       if (major === null) {
-        // rules：版本取不到（--no-exec 或无法执行）→ warn，不是 unknown
-        return { ...base, status: 'warn', detail: render({ version: version ?? '版本取不到（--no-exec 或无法执行）' }) };
+        // rules：版本取不到（没开启外部命令或无法执行）→ warn，不是 unknown
+        return { ...base, status: 'warn', detail: render({ version: version ?? '版本取不到（没开启外部命令或无法执行）' }) };
       }
       const ok = isFiniteNumber(minMajor) ? major >= minMajor : true;
       return {

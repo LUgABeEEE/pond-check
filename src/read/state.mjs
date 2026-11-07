@@ -11,7 +11,7 @@
  * 硬约束：
  *   - 只读：stat / read / access(W_OK) / PATH 查找，不写任何字节，不启停进程。
  *     （allowExec 打开时唯一例外是 SPEC §3.6 白名单里的 `node --version`，
- *       默认关闭；--no-exec 的语义就是把它关上。）
+ *       默认关闭：不显式允许就一次外部命令都不执行。）
  *   - 不读凭证：文件名命中 rules.json credentials.skipFilePatterns 的**整份不读**，
  *     文件名也不进任何输出；配置里键名命中敏感词的**跳过且不留痕**（连计数都不留）。
  *   - 失败降级：一切异常/读不到 → 对应字段 null + reason（机器码）+ reasonText
