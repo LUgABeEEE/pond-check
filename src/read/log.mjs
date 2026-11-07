@@ -12,8 +12,9 @@
  *
  * 硬约束：
  *   - 只读：open 只给 'r'，不写、不 stat 之外的任何副作用，不启停进程。
- *   - 预算：DEFAULT_TAIL_BYTES = 64 KiB（本模块默认口径），物理读取的硬上限是
- *     rules.json budget.tailBytes（256 KiB），调用方传更大也只读到这个数。
+ *   - 预算：DEFAULT_TAIL_BYTES 取自 rules.json budget.tailBytes（256 KiB），
+ *     物理读取硬上限同值，调用方传更大也只读到这个数。调用方可显式传更小的
+ *     maxBytes 来省内存，但不要那样做 —— health 的 24h 窗口会被静默缩小。
  *     「最多读 tailBytes」是上限不是指标，读更少只会更省，不会越界。
  *   - 不崩：非 UTF-8 / 二进制 / 半行截断 / 权限不足 / 文件不存在 / 是目录 / 是管道
  *     —— 全部走返回值，绝不抛异常。
@@ -23,7 +24,7 @@
  *
  * 契约：
  *   readLogTail(filePath | { path, ...options }, options?) -> Promise<LogTail>
- *     options.maxBytes     读取字节上限，缺省 64 KiB，上限 rules.budget.tailBytes
+ *     options.maxBytes     读取字节上限，缺省 rules.budget.tailBytes（256 KiB），可显式调小
  *     options.tailLines    返回最后多少行，缺省 50，上限 rules.budget.tailLines(500)
  *     options.maxSamples   每个关键词分类最多留几条样例，缺省 5
  *     options.maxLineChars 单行最多保留多少字符，缺省 2000（防「一行 64KB」撑爆报告）
