@@ -1,244 +1,211 @@
 # D8 审查收口：结论与遗留项（AUDIT-SUMMARY）
 
-- **基线**：`9c5c92b`（D8c 提交后），工作树另有他人未提交的 `src/cli.mjs` 模式位改动（100644→100755），与本文结论无关
+- **基线**：`b110106`（fix(D8)：关闭 P0 blocker 与三条 high）——本文件在**重判轮（attempt 2）**更新
 - **输入**：三份审查报告 —— [AUDIT-BOUNDARY](AUDIT-BOUNDARY.md)（c7248e1）、[AUDIT-HEALTH](AUDIT-HEALTH.md)（9732029）、[AUDIT-TESTS](AUDIT-TESTS.md)（9c5c92b）
-- **收口动作**：三份报告的全部 findings 去重合并 → **回 HEAD 亲自复核每一条「高」及以上**（不转述，全部重跑）→ 定级 → 给 verdict
-- **验收门**：`npm test` **114/114 exit 0**；三份报告文件均存在且已入库
+- **收口动作**：三份报告 findings 去重 → 回 HEAD 亲自复核 → 定级 → verdict；`b110106` 落地后**逐条重跑原反例**再判一次
+- **验收门**：`npm test` **121/121 exit 0**；三份审查报告 + 本汇总均存在
 
 ---
 
-## 0. Verdict：**needs_revision**
+## 0. 本轮重判（attempt 2 相对 attempt 1）
 
-**判据**：存在 1 条未关闭的 blocker —— **健康栏在日志被尾部截断时仍判「干净」**（D8b 原定级「高」，收口按 `src/rules.json` 的 `policy.note`「假健康是本项目最高优先级缺陷」提级为 blocker，理由见 §2）。项目自己的第一红线是「不许把没看到说成没问题」，而这条缺陷让工具对着 2 小时前的真实 412 报出「健康 干净 / 不用动」。
+上一轮判 **needs_revision**（1 blocker + 5 high + 10 medium + 10 low）。随后 `b110106` 声称关闭「P0 blocker + 三条 high」。我逐条重跑，结果如下——**不读提交说明，只重跑我自己那份反例**：
 
-> 附带说明：D8 这个**节点的工作**已经做完（三份审查齐、汇总齐、测试绿）。needs_revision 判的是**代码与文档能不能按现在这个样子发 v0.1.0**，不是审查没做完。下面 §5 的三件事做完即可转 pass，都是小改动。
+| finding | 上轮 | 现在 | 我这轮的实测证据 |
+|---|---|---|---|
+| **D8-B1** 假健康（尾部截断仍判 clean） | blocker | ✅ **关闭** | 同一份 24h / 86 400 行 / 7.17 MB 日志 → `health: unknown`，`evidence: {truncated:true, coveredHours:0.9, reason:'window_truncated', missing:['log_window']}`；phenomenon「日志太大了，这次只看了最后一段（覆盖 0.9 小时，不到 24 小时），所以「没看到报错」不等于「真的没报错」。」；文本行「3 项数据读不到（节律、健康、依赖），不能当正常」 |
+| **D8-H2** JSON 合同与 SPEC 不符 | high | ✅ **关闭** | SPEC:465 已写 `meta.generatedAt`、:467 已写 `fishes`，:498 另加「字段名以实际实现为准」注记；`--json` 实测顶层键与之吻合 |
+| **D8-H5** 同名鱼撞脸 | high | ✅ **关闭** | 真机两条 dsh-whale-widget 现在渲染成 `❓ widget（…105-1703）` / `❓ hale-widget（…web）`，可区分（代价是掉了公共前缀，可接受） |
+| **D8-M1** policy 声明无闸门 | medium | ✅ **关闭** | 新增 `tests/source-guards.test.mjs` 7 条守卫，直接读 `RULES.policy.noNetworkModules` / `forbiddenExec`，并加「写文件只允许 cli.mjs」 |
+| **D8-M7** T13/T14 源码守卫缺失 | medium | ✅ **关闭** | 同上文件（不联网 ×2 / 不外执行 / 只读写盘） |
+| **D8-M8** JSON 值级脱敏零测试 | medium | ✅ **关闭** | 行为断言：`id_ed25519` / `~/.npmrc` 必须被替换、修复话术必须保留；另外提交顺手修掉一个真泄漏（fixes 长版未走脱敏） |
+| **D8-H4** unknown 灰色零守卫 | high | ⚠️ **未关闭（部分）** | 新增 4 条 unknown 断言，但查的是 **class 名**（`card-unknown` / `light-unknown` / 文本不带 ✅），**没有查颜色**。我重跑原变异：`--unknown: #8b949e` → `#3fb950`，`node --test` 仍然 **121 pass / 0 fail**；而 `.light-unknown { background: var(--unknown) }`（html.mjs:424）说明颜色就是灯色 → **原缺陷可原样复现，守卫没拦住**。提交说明称「H4 关闭」，属于**假闭环** |
+| **D8-H1** modelLine 推断型 fail | high | ❌ **未关闭** | `config.json` 只有 `{"schemaVersion":3}` → `modelLine: fail` → `deps: broken/bad` → 鱼 `bucket: bad`（headline「依赖 坏了」），话术仍是「跑不起来或者跑起来也白跑」。不是每条鱼都用大模型 |
+| **D8-H3** 进程表承诺未实现 | high | ❌ **未关闭** | `processes: []`；SPEC:92-96 的 P1 `/proc` 探测、:137「Linux 全量支持」、:106「黑盒鱼」一节仍在 |
+| **D8-M3** 非视频鱼缺 ffmpeg → fail | medium | ❌ **未关闭，且提级 high** | `resolveFfmpegOptional`（system.mjs:894）分支写好了，但 `rules.json` 里 `ffmpegOptionalKinds` 未定义、5 个 kind 的 `producesVideo` **全是 null** → 生产路径恒 false。实测 `PATH=/nonexistent` → `ffmpeg: fail` → `deps: broken` → `bucket: bad` |
 
-| 级别 | 数量 | 说明 |
+---
+
+## 1. Verdict：**needs_revision**（比上一轮大幅收窄）
+
+**结论**：blocker **已清零**（B1 真修好了，我复核过反例）。但现在还有 **2 条会当场误判真鱼的 high**、**1 条文档承诺未兑现**、**1 条「守卫假闭环」**——其中前两条**同一个根因**，一次概念修正就能同时关掉。
+
+| 级别 | 数量 | 是什么 |
 |---|---|---|
-| blocker | **1** | 假健康真缺陷（可复现、无测试守） |
-| high | 5 | 推断型误判 ×1、文档合同不符 ×2、渲染红线零守卫 ×1、同名鱼撞脸 ×1 |
-| medium | 10 | 缺守卫 / 缺实现 / 措辞冲突 |
-| low | 10 | 口径可收紧、测试债务 |
-| 审查期间已闭环 | 2 | `--no-exec`（跨两份报告重复）、docs-consistency 闸假阳性 |
+| blocker | **0** | 假健康已闭环 |
+| high | **4** | D8-H1、D8-M3（← 提级）、D8-H3、D8-H4（守卫没守住） |
+| medium | 6 | `--out` 覆盖 / 「死了」用词 / 分桶门槛 / Windows / 缺用例 / SPEC 措辞 |
+| low | 10 | 见 §4.5 |
+| 本轮已关闭 | 6 | B1、H2、H5、M1、M7、M8（上一轮还关了 F-01/F-02） |
 
-**正向结论也要写清楚**（详见 §6）：只读边界零破坏（零网络、零依赖、凭证零泄漏、写盘只有报告本身），六格默认值全部 `unknown`、无 `|| 'ok'` 兜底，测试不是自我安慰（15 个注入缺陷 12 个当场被抓）。
+**为什么仍然不是 pass**：`D8-H1` 与 `D8-M3` 会让体检对着**一条正常的鱼**喊「依赖 坏了 / 死了」——旗舰场景（B 站轮询机器人、桌面宠物）恰恰是「不用大模型、不产视频」的那类。零 blocker，但**发版第一天就会收到「它说我死了，其实我在跑」的 issue**，而这正是本工具最不该犯的错（方向与假健康相反，但同样毁信任）。
 
----
+**给队长的两条路（我不替你做决定）**
 
-## 1. 我亲自复核了什么（全部在 HEAD `9c5c92b` 上重跑，不是转述）
-
-### 1.1 blocker：health 在尾部截断时判 clean（D8-B1）
-
-自造 24 小时、86 400 行、7.17 MB 的日志，2 小时前放 3 条真实 `412 Precondition Failed`（在 256 KiB 尾部窗口之外）：
-
-```
-$ node src/cli.mjs --root /tmp/d8sum-h1 --json | …打印 health…
-health: clean ok | value 0
-evidence.bytesRead: 262144  truncated: true  hasBinary: false
-bucket: ok | headline: 存活 活跃 · 节律 判不出 · 工作量 今天 1 条 · 健康 干净 · 依赖 判不出 · 漂移 对齐
-
-$ node src/cli.mjs --root /tmp/d8sum-h1 --text | head -4
-🐟 pond-check · 2026-11-07 21:16 · linux/node 22.23.4
-✅ d8sum-h1  活跃 刚刚  今天 1 条  缺 登录态
-→ 最该做：d8sum-h1：日志按天切割、别清 session
-※ 2 项数据读不到（节律、依赖），不能当正常。
-```
-
-尾部窗口 262 144 B / 7 171 172 B = **3.7% 的文件、约 53 分钟的时段**，却给出「健康 干净」+「2 项读不到（节律、依赖）」——**健康不在「读不到」名单里**，因为它在半个多小时的空窗里没看见坏事。触发条件极普通：日志 >256 KiB/天。
-
-### 1.2 high：同名鱼在 `--text` 撞脸（D8-H5）
-
-真机默认扫描，两条不同 profile 的 `dsh-whale-widget` 渲染成完全相同的两行（连判据都一样），用户无法区分：
-
-```
-❓ dsh-whale-widget  判不出  缺 日志
-❓ dsh-whale-widget  判不出  缺 日志
-```
-
-原因：`src/render/text.mjs:60` 的 `MAX_NAME_COLS = 20`，比「16 列名字 + 括号 + …」还窄，scope 尾巴被丢弃。
-
-### 1.3 high：JSON 合同与 SPEC 不符（D8-H2）
-
-```
-top keys: schemaVersion,meta,host,fishes,summary,fishBuckets,traceCounts,
-          bucketNote,traceNote,verdict,nextAction,footnote,degradedCount,skippedSensitive
-has top generatedAt: false | has fishes: true | has fish: false
-meta keys: generatedAt,pondCheckVersion,scanCount
-```
-
-而 `docs/SPEC.md:465` 写 `"generatedAt"`、`:467` 写 `"fish": [{`，且 SPEC 自称「下游只依赖这个」。
-
-### 1.4 high：进程表承诺未实现（D8-H3）
-
-```
-fish count: 2 | processes 全部为空: true     ← 两条真机鱼
-src/evaluate/index.mjs:633:    processes: [],
-```
-
-`docs/SPEC.md:92-96` 的 P1 明写 `/proc/<pid>/{cmdline,cwd,exe,stat}`，`:137` 又写 Linux「全量支持（/proc 可用）」。
-
-### 1.5 high：unknown 灰色零守卫（D8-H4）
-
-把 `src/render/html.mjs:328` 的 `--unknown: #8b949e` 改成 `#3fb950`（灰色→绿色，直接违反 SPEC §5.1），`node --test` 结果：
-
-```
-# tests 114
-# pass 114
-# fail 0
-```
-
-→ 项目第一红线「unknown 不许冒充正常」在渲染层没有任何测试在看着。
-
-### 1.6 medium：分桶 ok 门槛过低（D8-M5）
-
-三个产物全 `chmod 000` 的鱼：
-
-```
-bucket: ok | 已知格: 1 /6 | summary: {"fish":1,"ok":1,"watch":0,"bad":0,"unknown":5}
-fishBuckets: {"ok":1,"watch":0,"bad":0,"unknown":0}
-```
-
-六格里五格读不到，鱼却被算成 ✅ 活跃、并计进「认不出 0」。
-
-### 1.7 其余项
-
-`--no-exec`（F-01）已由 `f2ae08a` 闭环（`grep -rn "no-exec" src/ docs/SPEC.md` 零命中）；`win32` 分支确实不存在（`grep` 只命中文档/展示用 `platform` 字段）；`src/render/html.mjs:42` 的 `bad → '死了'` 与 `:50` / `:305` 的 `bad → '坏了'` 确实同页两个词。未逐条重跑的 medium/low 均来自三份报告的原机取证，报告里有命令与输出，可复现。
+- **路 A（推荐）**：修 §3 的 P0 两条（同一个根因，约 30 行 + 2 条回归）→ 我把 H1/M3 标关闭，剩下的 H3（SPEC 两段话）与 H4（一条颜色断言）都是 10 行级 → 我给 **pass**。
+- **路 B**：判断「假报警可接受」，把 H1/M3 写进 README「已知问题」+ CHANGELOG 的 Known issues → 回我一句「按 accepted-risk 处理」，我在本文件标 **accepted-risk** 并改判 **pass**（无 blocker 时这属于发布裁量权，我不会用规则卡你）。
 
 ---
 
-## 2. 为什么把 H1 提级为 blocker（定级说明，允许被质疑）
+## 2. 为什么把 D8-M3 提级为 high（本轮定级口径）
 
-1. **项目自己定的最高优先级**：`src/rules.json` 的 `policy.note`：「假健康是本项目最高优先级缺陷。」用户装这个工具，就是为了不被「看着没事」骗。
-2. **它落在「工具的核心承诺」上，不是边角**：SPEC §5「数据不足不默认正常」。H1 不是数据不足，是**数据只读了一半却当成全部**——比 unknown 更危险，因为它穿着绿衣服。
-3. **触发条件是常态**：>256 KiB/天的日志在真机上很常见（一台在跑 B 站轮询的机器一天就够）。不是极端输入。
-4. **无任何测试守着**：变异测试里「日志不截断」能杀 4 条，但「截断了还判 clean」这条反方向没人守。
-5. **代价低、改法明确**：D8b 给的方案 A（`read/log.mjs` 导出首条时间戳 → 覆盖时长 < 24h 判 `unknown(reason='window_truncated')`）约 20 行 + 1 条回归用例。
+同一类错误的两个实例：
 
-不加这一条也能「按规则」判 pass（规则只写了 blocker 才必须 needs_revision），但那是拿规则的下限当标准。**认定：现在的 v0.1.0 会把「2 小时前的 412」报成「健康 干净、不用动」，不该以「假健康检查工具」的身份发布。**
+- **H1**：配置里**没有**模型字段 → 判 `fail`。「这份配置没写」≠「她需要模型且没配」。
+- **M3**：PATH 上**没有** ffmpeg → 判 `fail`。「这台机器没装 ffmpeg」≠「这条鱼要用 ffmpeg」。
+
+两者都落在 deps 六项检查里，都直接把整条鱼推进 `bad` 桶（「死了」），都在**最常见的鱼种**上触发。D8b 把 M3 定为「中」是因为 D4b 先报过；但既然这是发布闸门，我按**用户可见后果**定级，不按「谁先报的」定级。
+
+**一个概念修正同时关掉两条**：把 deps 的 `fail` 语义收紧成「**证伪才 fail**」——
+
+- 模型线路：键在且非空 → `pass`；键在但空 → `fail`；**一个键都没有 → `unknown`**（「这份配置里没看到模型线路，可能她不用模型，也可能配在别处」）。
+- ffmpeg：`producesVideo !== true` 的鱼（B 站轮询、桌面宠物、astrbot）→ `warn` 或 `unknown`；只有声明产视频的鱼才 `fail`。`resolveFfmpegOptional` 的骨架已经写好，**只差把 `rules.json` 的 `ffmpegOptionalKinds` / `producesVideo` 填上**。
 
 ---
 
-## 3. 完整 findings 清单（去重、按 severity 排序）
+## 3. 本轮要动手的四条（按性价比排序）
 
-> 命名：`D8-<级别><序号>`；`来源` 列指向三份报告里的原始编号，便于回溯证据。
-> `requiredFix` 是「改什么才能关掉它」，不是建议清单。
+### P0-1 D8-H1 + D8-M3：deps 的「没看到」不许当「坏了」（约 30 行）
 
-### 3.1 已关闭（审查期间修复，保留记录）
+| 项 | 内容 |
+|---|---|
+| 位置 | `src/evaluate/system.mjs:802`（modelLine）、`:714`（ffmpeg）、`src/rules.json:1164`（modelLine 检查项）、rules 的 `discovery.kinds[*].producesVideo` / `deps.thresholds.ffmpegOptionalKinds` |
+| 改法 | 见 §2 的两段语义；判成 `unknown` 时 fixes 不许出现「跑不起来」这类话术，改成「这份配置里没看到…」+「如果她确实要模型，把 model/baseUrl 写进 config.json」 |
+| 回归 | ①`{"schemaVersion":3}` 夹具 → 断言 `deps.level !== 'broken'`；②`PATH=/nonexistent` + 非视频 kind → 断言 `ffmpeg` 不是 `fail`（或整鱼不进 `bad` 桶） |
+
+### P0-2 D8-H3：把「进程表」这件事在 SPEC 里说清楚（两段话）
+
+`processes` 恒 `[]` 短期不好补（要 `/proc` 解析 + 黑盒鱼），但**不能继续在 SPEC 里承诺**：
+
+- §8「已知局限」补一条：「v0.1 不读进程表：只按目录 / `--root` 定位；`processes` 恒空；`liveness` 只用文件 mtime。」
+- §3.5 表格把 Linux 的「全量支持（`/proc` 可用）」改成「文件信号全支持；进程表见 §8」。
+- （可选）§4.1「黑盒鱼」一节加「v0.1 未实现」。
+
+### P0-3 D8-H4：把守卫从「类名」补到「颜色」（约 5 行）
+
+现有 4 条断言查的是 `card-unknown` / `light-unknown` 类名——我那把「灰改绿」的刀从旁边过去了。补一条就够：
+
+```js
+// 断言 unknown 的灯色不等于 ok 绿
+const html = renderHtml(unknownFishReport());
+const unknownHex = /--unknown:\s*(#[0-9a-fA-F]{6})/u.exec(html)?.[1]?.toLowerCase();
+const okHex = /--ok:\s*(#[0-9a-fA-F]{6})/u.exec(html)?.[1]?.toLowerCase();
+assert.ok(unknownHex && okHex && unknownHex !== okHex,
+  'unknown 用了和 ok 一样的绿 —— 灰的冒充成绿的了');
+```
+
+### P1 D8-M2 / M4 / M5 / M6 / M9 / M10
+
+`--out` 覆盖保护、统一「坏了」、分桶 ok 门槛、Windows 早退、`--root` 不存在路径用例、SPEC「只读/写盘」措辞——都是小改，见 §4.4。
+
+---
+
+## 4. 完整 findings 清单（去重、按 severity 排序，含状态）
+
+> `来源` 指向三份报告的原编号。状态：**closed（本轮）** / **open** / **accepted-risk**（队长裁量）。
+
+### 4.1 已关闭（8 条，保留台账）
+
+| id | severity | problem | 关闭方式 | 来源 |
+|---|---|---|---|---|
+| F-01 | fixed | `--no-exec` 写在 SPEC/rules 里但 CLI 不认（exit 2） | `f2ae08a`：SPEC 改「默认关闭」措辞、rules 换 `enabledByDefault:false` | BOUNDARY M1 + TESTS A1 |
+| F-02 | fixed | `docs-consistency` 闸首轮 113/114 红（3 条是测试自身假阳性） | `f2ae08a` 重写闸 | HEALTH M3 |
+| D8-B1 | blocker→closed | health 在 256 KiB 尾部截断时判 clean，声称 24h | `b110106`：`firstTimestamp` + `coveredHours` + `window_truncated` → 我复核为 `unknown` | HEALTH H1 |
+| D8-H2 | high→closed | JSON 合同 `fish`/`generatedAt` 与 SPEC 不符 | `b110106`：改 SPEC 两行 + 注记 | TESTS A2 |
+| D8-H5 | high→closed | 同名不同 profile 的鱼渲染成两行相同 | `b110106`：压缩后做冲突检测，给 scope 留位置 | TESTS A5 |
+| D8-M1 | medium→closed | policy 声明无闸门 | `tests/source-guards.test.mjs` 直接读 `RULES.policy` | BOUNDARY M2 |
+| D8-M7 | medium→closed | T13/T14 源码守卫缺失 | 同上（不联网 ×2、不外执行、只读写盘） | TESTS B2 |
+| D8-M8 | medium→closed | JSON 值级脱敏零测试 | 行为断言 + 顺手修掉 fixes 长版真泄漏 | TESTS B3 |
+
+### 4.2 blocker
+
+**无。**
+
+### 4.3 high（4 条，全部 open）
 
 | id | severity | problem | requiredFix | 来源 |
 |---|---|---|---|---|
-| F-01 | fixed | `--no-exec` 写进 SPEC/rules.json/话术，CLI 不认（实测 exit 2）；两份报告独立发现 | 已修 `f2ae08a`：SPEC 改「默认关闭，不显式开启就不执行」，rules 换 `enabledByDefault:false` + `disableNote`。**遗留**：`rules.json` 的结构化字段仍不在一致性闸范围内 | BOUNDARY M1 + TESTS A1 |
-| F-02 | fixed | 首轮 `docs-consistency` 闸 113/114 红，其中 3 条是测试自身假阳性 | 已修 `f2ae08a`：闸重写，现 114/114 绿 | HEALTH M3 |
+| D8-H1 | high | `modelLine`：配置里一个模型键都没有 → `fail` → deps `broken` → 整条鱼「坏了/死了」；实测 `{"schemaVersion":3}` 即触发 | 「一个键都没有」→ `unknown`；只有「键在值为空」才 `fail`；fixes 文案同步改。回归：A7 夹具 `deps.level !== 'broken'` | HEALTH H2 |
+| D8-M3 | **high**（原中，提级） | 非视频鱼缺 ffmpeg → `fail` → 整鱼「死了」；`resolveFfmpegOptional` 分支已写但 `ffmpegOptionalKinds`/`producesVideo` 全未配，生产恒 false。实测 `PATH=/nonexistent` → `deps broken / bucket bad` | 填 rules：`discovery.kinds[*].producesVideo`（bilibili / desktop-pet / astrbot = false）或 `deps.thresholds.ffmpegOptionalKinds`；没声明产视频的鱼 ffmpeg 缺失降 `warn`/`unknown` | HEALTH H2b |
+| D8-H3 | high | SPEC §3.2 P1 的 `/proc` 进程表未实现，`processes` 恒 `[]`；§3.5 仍写 Linux「全量支持」、§4.1 仍写「黑盒鱼」 | SPEC §8 补「v0.1 不读进程表，liveness 只用文件 mtime」；§3.5 去掉「全量支持」；§4.1 标「v0.1 未实现」 | TESTS A3 |
+| D8-H4 | high | 「unknown 不许冒充绿」守卫**查类名不查颜色**：重跑 `--unknown: #8b949e → #3fb950`，`node --test` 仍 121/121 全绿；而 `.light-unknown { background: var(--unknown) }` 说明这颜色就是灯色 | 补一条颜色断言（§3 P0-3 的 5 行），并自测「改绿必须变红」 | TESTS A4 |
 
-### 3.2 blocker
-
-| id | severity | problem | requiredFix | 来源 |
-|---|---|---|---|---|
-| D8-B1 | **blocker** | `health` 在日志被 256 KiB 尾部截断时仍判 `clean`，话术声称「最近 24 小时日志里没看到报错」并给「不用动」。实测尾部只覆盖 24 小时的 3.7%（约 53 分钟），2 小时前的 3 条 412 完全没算进；HTML/文本里 `truncated` 一次都不出现。位置：`src/evaluate/system.mjs:422,521` + `src/rules.json:798` | ①`src/read/log.mjs` 额外导出缓冲区**第一条可解析时间戳**；②`health` 用 `(now - firstTs)/3600 < windowHours` 判定窗口不完整 → `unknown` + `reason:'window_truncated'` + `missing:['log_window']`；③`rules.json` health 补一条 unknown 文案（「只扫到最近 X 分钟」）；④回归用例：>256 KiB 日志 + 412 在窗口外 24 小时内 → 断言 `level==='unknown'`。**最低限度**（不推荐）：`truncated` 时把「这份干净只覆盖最后 256 KiB」写进 `phenomenon` 并在三层渲染可见 | HEALTH H1 |
-
-### 3.3 high
+### 4.4 medium（6 条，全部 open）
 
 | id | severity | problem | requiredFix | 来源 |
 |---|---|---|---|---|
-| D8-H1 | high | `modelLine`：配置里没有任何 `model/provider/baseUrl/apiBase` → `fail` → `deps broken` → 整条鱼「死了」，话术「跑不起来或者跑起来也白跑」。不是每条鱼都用大模型（B 站轮询、桌面宠物、纯脚本 bot）。`src/evaluate/system.mjs:802` + `rules.json:1164` | 「一个模型相关键都没有」→ `unknown`（「这份配置里没看到模型线路，可能她不用模型，也可能配在别处」）；只有「键在但值为空」才 `fail`。或用 `discovery.kinds[*].requiresModel` 跳过不需要模型的鱼。回归：A7 夹具 → `deps.level !== 'broken'` | HEALTH H2（原中高） |
-| D8-H2 | high | JSON 合同改过名（`fish`→`fishes`、`generatedAt`→`meta.generatedAt`），SPEC §6.2 仍写旧名且自称「下游只依赖这个」 | 改 `docs/SPEC.md:465,467` 两行（最省事）；并在 `tests/` 加一条**顶层键集合**合同断言（现在没有任何测试断言顶层键名） | TESTS A2 |
-| D8-H3 | high | SPEC §3.2 P1 的 `/proc` 进程表探测完全没实现，`processes` 恒 `[]`；§3.5 又写 Linux「全量支持（/proc 可用）」 | 短期：SPEC §8「已知局限」补「v0.1 不读进程表，liveness 只用文件 mtime」，删掉 §3.5 Linux「全量支持」；长期（v0.2）再实现 P1 | TESTS A3 |
-| D8-H4 | high | 「unknown 不许冒充正常」在渲染层零守卫：`--unknown` 改绿，114 用例全绿 | 加 HTML 断言：未知档位的颜色**不等于** ok 绿、且卡片带 `?`；同时补一条「四灯 unknown 计数」断言 | TESTS A4 |
-| D8-H5 | high | 同名不同 profile 的鱼在 `--text` 渲染成完全相同的两行（`MAX_NAME_COLS=20` 丢掉 scope），真机复现，且无测试守 | ①`src/render/text.mjs:60` 提到 26 或退化时输出 `dsh-whale…（web）` 短 scope 形式；②加回归用例：两条同名鱼渲染行**名字部分必须不同** | TESTS A5 |
+| D8-M2 | medium | `--out` 静默覆盖已存在文件（实测把 `DO NOT TOUCH` 覆盖成 9 008 B）+ 递归建目录，无 `--force`，符号链接顺链写 | 目标存在且非本工具产物时拒绝 + `--force`；`--help` 注明 | BOUNDARY M3 |
+| D8-M4 | medium | 分桶 `bad` 同页两个词：四灯/统计行「死了」，summary「坏了」；deps broken 但活跃的鱼同屏 🔴 + 「活跃 刚刚」 | 统一「坏了」，或只把「死」留给 `liveness==='dead'`。回归：deps broken + liveness active 不得出现「死了」 | HEALTH H3 |
+| D8-M5 | medium | 分桶 `ok` 门槛过低：实测 1/6 格已知仍 `bucket:ok`、`fishBuckets ok:1 unknown:0`，summary 却写 `unknown:5` | 门槛抬到「已知格 ≥2 且 liveness 已知」；或统计行加「其中 N 条有多格判不出」 | HEALTH H4 |
+| D8-M6 | medium | Windows「明确报 unsupported」未实现（`grep win32 src/` 只命中 ffmpeg 文件名与 rules 表） | 8 行早退 + 注入 platform 的测试 | TESTS B1 |
+| D8-M9 | medium | `--root` / `--log` / `--dedupe` 指到不存在路径（warn + exit 0）无用例锁 | 补 3 条 CLI 用例 | TESTS B4 |
+| D8-M10 | medium | SPEC:39「不写用户目录」与默认往 cwd 写 `pond-check-<ts>.html` 措辞冲突 | SPEC 补一句「唯一写盘 = 报告文件；默认 cwd，可用 `--out`，绝不写进鱼的窝」 | TESTS D5 |
 
-### 3.4 medium
-
-| id | severity | problem | requiredFix | 来源 |
-|---|---|---|---|---|
-| D8-M1 | medium | `rules.json` 的 `policy.noNetworkModules` / `forbiddenExec` / `readOnly` / `offline` 是纯声明：全仓无任何代码或测试读它们 ⇒ 边界靠自觉 | 加 `tests/source-guards.test.mjs`：扫 `src/**/*.mjs` 的 import 说明符，命中 `noNetworkModules` 或裸 specifier 即失败；`child_process` 只允许出现在 `src/read/state.mjs` 且必须被 `allowExec` 守卫 | BOUNDARY M2 + TESTS B2 |
-| D8-M2 | medium | `--out` 静默覆盖已存在文件（实测把 `DO NOT TOUCH` 覆盖成 9 008 B HTML）并递归建父目录，无存在性检查/无 `--force`；符号链接顺链写 | 目标存在且不是本工具产物时拒绝写入并提示 `--force`；`--help` 注明「会覆盖同名文件」 | BOUNDARY M3 |
-| D8-M3 | medium | 非视频鱼缺 `ffmpeg` → `fail` → 整条鱼「死了」（实测一条 活跃+今天 1 条+健康干净+漂移对齐 的鱼被判「死了 1」）。`ffmpegOptional` 生产路径恒 false | 给 `discovery.kinds` 加 `producesVideo`；或把 ffmpeg 缺失默认降为 `warn` | HEALTH H2b |
-| D8-M4 | medium | 分桶 `bad` 的展示词「死了」与语义不符：同一份 HTML 里 summary 写「1 坏了」、四灯写「死了」；一条 `deps broken` 但活跃的鱼同时出现 🔴 与「活跃 刚刚」 | 统一成 SPEC §6.1 的「坏了」，或把「死了」只留给 `liveness==='dead'`。回归：deps broken + liveness active 的鱼，四灯与统计行不得出现「死了」 | HEALTH H3 |
-| D8-M5 | medium | 鱼级分桶 `ok` 门槛过低：5/6 格读不到、只有 liveness 判出也算 ✅ 活跃（实测 `bucket:ok, 已知格 1/6, summary ok:1 unknown:5`），而 summary 老实写「5 判不出」 | 门槛抬到「已知格 ≥2 且 liveness 已知」；或统计行/四灯加「其中 N 条有多格判不出」 | HEALTH H4 |
-| D8-M6 | medium | SPEC 承诺 Windows「明确报 unsupported」，`grep -rn win32 src/` 无分支（`cli.mjs` 无平台判断） | 加 8 行早退：`process.platform==='win32'` → 一行「本版本不扫 Windows」+ 一行下一步，exit 0；测试用注入 platform 覆盖 | TESTS B1 |
-| D8-M7 | medium | SPEC §7 的 T13/T14 源码扫描守卫既无测试、CI 也没有该步骤 | 新增 `tests/source-guards.test.mjs`（T13 零网络/零裸依赖、T14 阈值只来自 rules）并入 CI | TESTS B2 |
-| D8-M8 | medium | JSON 值级脱敏（防御纵深）零测试：关掉 `redactValue` 的脱敏分支，114 用例全绿 | 加一条形似凭证名的 `name` 用例，断言输出为 `sensitivePathToken` | TESTS B3 |
-| D8-M9 | medium | `--root` / `--log` / `--dedupe` 指到不存在路径：实测 warn + exit 0，但无用例锁 | 补 3 条 CLI 用例（stderr 有话、exit 0、报告仍出） | TESTS B4 |
-| D8-M10 | medium | SPEC:39「不写用户目录」与默认往 cwd 写 `pond-check-<ts>.html` 的措辞冲突（用户分不清「只读」到底指什么） | SPEC 补一句：「唯一写盘 = 报告文件；默认 cwd，可用 `--out` 指定，绝不写进鱼的窝」 | TESTS D5 |
-
-### 3.5 low
+### 4.5 low（10 条，全部 open）
 
 | id | severity | problem | requiredFix | 来源 |
 |---|---|---|---|---|
-| D8-L1 | low | 环境变量 `POND_CHECK_RULES` 让 `loadRules()` 读任意路径（含凭证文件），无名字闸；CLI 路径不可达（实测 0 open），仅库 API | `customPath` 解析前走一次 `isSensitiveFileName(basename)`，命中返回 null | BOUNDARY L1 |
-| D8-L2 | low | `config.json` 内容整份读进内存再解析（敏感键只是「不输出」不是「不读」）；实测 0 泄漏，属设计内 | 不改代码；README/`--help` 隐私段落写清「只判存在性，值不落任何输出」 | BOUNDARY L2 |
-| D8-L3 | low | 模式外的凭证味目录（`minasCred`/`minasCert`）被 `readdir` 列名（不 open 内部文件、名字不进报告） | 保守补 `*cred*`/`*cert*` 类目录模式，注意别误杀 `credits` 这类无关目录 | BOUNDARY L3 |
-| D8-L4 | low | 默认模式在 cwd 累积 `pond-check-<时间戳>.html`，不清理不覆盖 | 文档提一句；或后续加 `--out` 默认固定名 | BOUNDARY L4 |
-| D8-L5 | low | `windowStale` 时 `nextStep` 直接拼接，出现「不用动。先看「存活」那栏…」的自相矛盾 | 改为**替换**而非拼接（rules 里加 `health.variants.windowStale.nextStepTemplate`） | HEALTH M1 |
-| D8-L6 | low | 数字关键词边界只排数字与点、不排字母：`BV412`、`?aid=412` 会被算成风控（假报警方向） | 数字关键词要求前后是空白/标点；或匹配前剥掉 URL 与 `BV[0-9A-Za-z]{10}` 形态的 token | HEALTH M2 |
-| D8-L7 | low | SPEC §531「sqlite 无驱动时读 mtime/size 估算」与实现不符（实现是 `count=null` + `reason`，更保守） | 改 SPEC 措辞为「无驱动时条目数 `unknown`，只保留 mtime」 | TESTS D7 |
-| D8-L8 | low | README:7 「D1–D7 七个阶段」已过时（实际到 D8） | 改 D1–D8 或删掉阶段描述 | TESTS D8 |
-| D8-L9 | low | `docs/CAPABILITIES-SPEC.md`（387 行记忆/唤醒/TTS/出图设计）在仓库里零实现，易被读成「已支持」 | README 加一行：「该文件是**未实现的设计稿**，v0.1 不含这些能力」 | TESTS D9 |
-| D8-L10 | low | 测试侧债务合集：①10 条弱断言（`evaluate:259 assert.ok(footnote)`、`boundary:724/725 length>0`、`boundary:446 !==null`、`discover:59/79`、`read:89/106`、`render:165-171`、`evaluate:176/178`）；②`tests/evaluate.test.mjs:437` 硬编码 `3600`，违反「改阈值只改 rules.json」；③5 项环境敏感点（root 下 chmod skip、软链/FIFO 仅 POSIX、5 处 `elapsed<5000` 墙上时钟、1ms 超时、1 GiB 稀疏文件）无留痕 | 按 TESTS §4 表逐条强化；`3600` 改读 `rules.json`；环境敏感点加 `t.skip` 说明或改相对阈值 | TESTS §4/§7/§8.3 |
+| D8-L1 | low | `POND_CHECK_RULES` 让 `loadRules()` 读任意路径（含凭证文件）无名字闸；CLI 不可达（strace 0 open），仅库 API | `customPath` 先过 `isSensitiveFileName` | BOUNDARY L1 |
+| D8-L2 | low | `config.json` 整份进内存再解析（敏感键只跳输出）；实测 0 泄漏，设计内 | 文档写清口径即可 | BOUNDARY L2 |
+| D8-L3 | low | 模式外的凭证味目录（`minasCred`/`minasCert`）被 readdir 列名（不 open、名字不进报告） | 保守补 `*cred*`/`*cert*` 目录模式 | BOUNDARY L3 |
+| D8-L4 | low | 默认模式在 cwd 累积带时间戳 HTML | 文档提一句 | BOUNDARY L4 |
+| D8-L5 | low | `windowStale` 的 nextStep 拼接出「不用动。先看「存活」那栏」 | 改替换而非拼接 | HEALTH M1 |
+| D8-L6 | low | 数字关键词不排字母：`BV412` / `?aid=412` 误判风控 | 前后要求空白/标点，或先剥 URL/BVID | HEALTH M2 |
+| D8-L7 | low | SPEC:536「sqlite 无驱动时读 mtime/size」与实现不符（实现更保守） | 改措辞为「条目数 unknown，只保留 mtime」 | TESTS D7 |
+| D8-L8 | low | README 的 D1–D7 阶段描述（D7a 重写后已改善，可复查） | 一并核对 | TESTS D8 |
+| D8-L9 | low | `docs/CAPABILITIES-SPEC.md` 零实现的设计稿易被读成已支持 | README 加「未实现设计稿」指针 | TESTS D9 |
+| D8-L10 | low | 测试债务：10 条弱断言 + `evaluate.test:437` 硬编码 3600 + 5 项环境敏感点无留痕 | 按 TESTS §4 表强化；3600 改读 rules；敏感点加 skip 说明 | TESTS §4/§7/§8.3 |
 
 ---
 
-## 4. 去重说明（三份报告之间重复的项）
+## 5. 本轮我实际跑过的复核命令（可复现）
 
-| 重复内容 | 出现处 | 合并为 |
-|---|---|---|
-| `--no-exec` 不存在 | BOUNDARY M1（独立发现）+ TESTS A1（独立发现） | F-01（已修） |
-| 「缺守卫 / 声明没有闸门」同一族 | BOUNDARY M2（policy 声明无闸）→ TESTS A4（unknown 颜色）/ B3（脱敏）/ B2（T13/T14） | 拆成 D8-M1（源码闸）、D8-H4（unknown 颜色）、D8-M8（脱敏）、D8-M7（T13/T14），**同一份 `tests/source-guards.test.mjs` 可一起关掉前两项** |
-| 「deps 里推断 → 整鱼死了」同一族 | HEALTH H2（modelLine）/ H2b（ffmpeg） | 拆成 D8-H1 / D8-M3（两个不同检查项，改法不同） |
-| 「话术自相矛盾」 | HEALTH M1（windowStale 拼接） | D8-L5（与 D8-B1 同一处代码，修 H1 时顺手） |
-| 「文档与实现不符」 | TESTS D2/D3/D5/D7 | D8-H2（JSON 合同）/ D8-H3（进程表）/ D8-M10（只读措辞）/ D8-L7（sqlite 措辞） |
+```bash
+# blocker 复跑（同一份 24h / 86400 行 / 7.17 MB 日志，2h 前 3 条 412 在尾窗之外）
+node src/cli.mjs --root /tmp/d8sum-h1 --json   # health: unknown, coveredHours 0.9, missing ['log_window']
+node src/cli.mjs --root /tmp/d8sum-h1 --text   # 「3 项数据读不到（节律、健康、依赖），不能当正常」
 
----
+# H5 真机
+node src/cli.mjs --text                        # ❓ widget（…105-1703） / ❓ hale-widget（…web）
 
-## 5. 转 pass 的最短路径（建议按此顺序）
+# H2
+node src/cli.mjs --json                        # 顶层 …fishes…；SPEC:465 meta.generatedAt / :467 fishes
 
-**P0（不做完不建议发 v0.1.0）**
+# H4 原变异重跑
+cp -a . /tmp/d8mut2 && sed -i 's/--unknown: #8b949e;/--unknown: #3fb950;/' /tmp/d8mut2/src/render/html.mjs
+( cd /tmp/d8mut2 && node --test )              # 121 pass / 0 fail   ← 守卫没拦住
 
-1. **D8-B1** 健康窗口不完整 → `unknown`（约 20 行 + 1 条回归）。这是唯一 blocker。
-2. **D8-H5** `--text` 名字列宽 + 「同名鱼可区分」回归（改一个常量 + 1 条用例）。
-3. **D8-H2** 改 SPEC 两行键名 + 一条顶层键集合合同测试。
+# H1
+printf '{"schemaVersion":3}' > cfg.json; node src/cli.mjs --root <夹具> --json
+# deps: broken bad；checks: …, modelLine: fail, …；bucket: bad
 
-**P1（同一迭代内，做完成本很低）**
+# M3
+PATH=/nonexistent node src/cli.mjs --root <夹具> --json
+# ffmpeg: fail → deps: broken → bucket: bad（rules 的 ffmpegOptionalKinds=undefined、producesVideo 全 null）
 
-4. D8-H4 + D8-M1 + D8-M8 + D8-M7 → 新建 `tests/source-guards.test.mjs`，一次把「零网络/零裸依赖/unknown 不许绿/脱敏/阈值来源」五类红线钉住（四份报告都指向同一件事：**红线没有守卫**）。
-5. D8-H1 + D8-M3 → deps 的两处推断降为 `unknown`。
-6. D8-M5 + D8-M4 → 分桶口径与展示词。
+# H3
+node src/cli.mjs --root <夹具> --json          # processes: []
+grep -n '进程表\|/proc\|全量支持' docs/SPEC.md # :92-96 / :106 / :137 仍在
 
-**P2（v0.1.x 再说）**：D8-H3 / D8-M2 / D8-M6 / D8-M9 / D8-M10 与全部 low。
-
----
-
-## 6. 正面结论（三份报告都验过、值得写进发布说明）
-
-- **只读边界零破坏**：零网络（grep exit 1 + `strace` 零 socket）、零依赖（四个依赖键不存在、零裸 import）、凭证零泄漏（假凭证炸弹三渲染 0 命中、`strace` 级 0 次 open）、写盘只有报告本身（`--text`/`--json` 0 写、假 HOME 0 项、`execve` 仅 node 自身、`kill` 类 0）。
-- **六格默认值全部 `unknown`**，源码无 `|| 'ok'` / `?? 'clean'` 兜底；`deps` 只探到 2 项 → `unknown` 不是 `ready`；判重表无时间戳 → `unknown` 不是 `quiet`；空日志/二进制 → `unknown`（D6 的 B1/B2 修复有效）。
-- **测试不是自我安慰**：15 个注入缺陷 12 个被抓（80%），判定层尤其硬（「unknown 当 ok」一次杀 17 条）；边界压测真的在造坏环境（chmod 000 / FIFO / 软链成环 / 1 GiB 稀疏文件 / 二进制 / 时钟错乱）。
-- **降级链路三层可见**：`degraded` 在文本 / HTML / JSON 都有，`fixes` 只收非 ok 格，`rules.json` 的 unknown 档没有任何「不用动」话术。
-
----
-
-## 7. 验收门证据
-
-```
-$ ls docs/AUDIT-*.md
-docs/AUDIT-BOUNDARY.md  docs/AUDIT-HEALTH.md  docs/AUDIT-SUMMARY.md  docs/AUDIT-TESTS.md
-
-$ npm test … → node --test
-# tests 114
-# pass 114
-# fail 0
-# cancelled 0
-# skipped 0
-exit 0
+# 基线
+npm test                                       # 121 tests / 121 pass / 0 fail / exit 0
 ```
 
-本次收口复核动作（全部真跑，见 §1）：H1 反例重建 + 三种渲染、A5 真机两行撞脸、A2 顶层键打印、A3 `processes` 全空、A4 变异（unknown 改绿 → 114 全绿）、H4 chmod 000 分桶、SPEC/`win32` 定点核对。
+---
+
+## 6. 正面结论（本轮又加强了）
+
+- **只读边界零破坏**：零网络（现已从「我 grep 过」升级为 `tests/source-guards.test.mjs` 闸门）、零依赖、凭证零泄漏、写盘只有 `cli.mjs` 一处（同样进了闸门）。
+- **假健康主链路真的修好了**：B1 的修法不是打补丁，而是把「窗口覆盖了多少」变成证据（`coveredHours`）并写进人话——这是本项目的正确方向。
+- **红线从 0 守卫到 6 条**：unknown 类名 / 文本 ✅ 标记、JSON 脱敏、只读写盘、不联网 ×2、不外执行——只差 unknown 的**颜色**这一条（H4）。
+- **测试仍是硬的**：121 用例全绿，判定层变异仍能成片杀。
+- **修复质量本身不错**：`b110106` 顺手抓到 `json.mjs` fixes 长版未脱敏的真泄漏，并补了 `cli.mjs` 的 shebang（`npm i -g` 装出来不再坏）——这两条都不在审查清单里。
 
 ---
 
-## 8. 局限
+## 7. 局限
 
-1. **medium/low 未逐条重跑**：它们来自三份报告的原机取证（各自附命令与输出），我复核了其中影响结论走向的部分（§1.7）。
-2. **平台**：全部结论在 Linux / Node 22.23.4 上取得；Windows / macOS 的边界与分桶行为未验证（D8-M6 本身就是这个缺口）。
-3. **severity 提级是我的判断**：D8-B1 在原报告是「高」，收口按 `rules.json` 的「假健康是本项目最高优先级缺陷」提级为 blocker 并在 §2 写明理由——不同意可以按「高」重判，但**这条缺陷本身不该带着发版**。
-4. 本文只做汇总与定级，**没有改动任何代码或测试**（本轮唯一写入 = 本文件）。
+1. medium/low 未逐条重跑（沿用三份报告的原机取证）；high 及以上**全部**由我本轮亲自复跑。
+2. 全部结论基于 Linux / Node 22.23.4；Windows 行为未验证（D8-M6 就是这个缺口）。
+3. D8-M3 由 medium 提为 high 是我的定级判断，理由在 §2；不同意可以按 medium 处理，但它和 H1 是同一个用户可见后果。
+4. 本轮唯一写入 = 本文件；未改任何代码或测试。
