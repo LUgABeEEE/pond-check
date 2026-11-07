@@ -1,0 +1,16 @@
+{
+  "name": "pond-check",
+  "version": "0.1.0",
+  "description": "扫一遍你机器上所有在跑的鱼，出一页体检报告：谁活着、干了啥、哪儿坏了、怎么修。",
+  "type": "module",
+  "bin": { "pond-check": "src/cli.mjs" },
+  "files": ["src", "docs", "README.md", "LICENSE"],
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "test": "node --test tests/",
+    "test:watch": "node --test --watch tests/"
+  },
+  "keywords": ["dsh","agent","monitor","diagnostics","bilibili","qq-bot","observability"],
+  "license": "MIT",
+  "repository": { "type": "git", "url": "git+https://github.com/LUgABeEEE/pond-check.git" }
+}
