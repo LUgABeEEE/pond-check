@@ -455,23 +455,27 @@ function buildHeadline(rules, indicators) {
 }
 
 /* ------------------------------------------------------------------ *
- * 3.5 鱼级分桶：按**关键格**，不按最差格（D6 队长裁定）
+ * 3.5 鱼级分桶：bad/watch 按最差格，ok 要过门槛（D6 队长裁定 + D8-M5 抬门槛）
  *
  * 六格口径（summary）回答「一共有多少个格子判出来了」，鱼级分桶回答「这条鱼算活着
  * 还是算认不出」——两码事，混在一起就会出现「四格有结论、只有 rhythm/deps 判不出，
  * 却被整条划进『认不出』」的误导。
  *
- * 规则（顺序即优先级）：
- *   1. 任一格 bad      → 死了
- *   2. 任一格 watch    → 疲软
- *   3. 关键两格（liveness + throughput）都 unknown → 认不出
- *   4. 其余            → 活跃（rhythm / deps / health / drift 判不出不影响这条结论）
+ * 规则（顺序即优先级，顺序不许换）：
+ *   1. 任一格 bad      → bad（展示词「坏了」；「死了」只留给 liveness=dead 那一格，D8-M4）
+ *   2. 任一格 watch    → watch
+ *   3. 已知格 ≥ 2 且 liveness 已知 → ok（D8-M5 门槛）
+ *   4. 其余            → unknown（是「判不出」，不是「要注意」，绝不落 watch）
  *
- * 为什么关键格是这两格：它们回答「她还在不在干活」。这两格能判，这条鱼就还活着；
- * 其余的判不出，如实写进「※ N 项数据读不到」就够了，不该改写整条鱼的结论。
+ * 第 3 步必须排在 1、2 之后：「已知格只有 1 个但是 bad」是确定的坏消息，
+ * 不许降级成「判不出」。反方向的坑也堵上了：六格里只有 1 格已知的鱼以前会被判成
+ * ok，报告一边写 summary unknown:5、一边写 bucket ok，两处自相矛盾（D8-M5）。
  * ------------------------------------------------------------------ */
 
-/** 关键两格：这两格都判不出，才整条鱼算「认不出」。 */
+/**
+ * 关键格：liveness 是 ok 门槛的硬条件（判不出就不算 ok）；
+ * throughput 是「她在不在干活」的参考格。两格都判不出时整条鱼必然落「认不出」。
+ */
 export const KEY_INDICATORS = Object.freeze(['liveness', 'throughput']);
 
 /**
@@ -486,10 +490,41 @@ export function classifyFishBucket(fish) {
     // 没声明 / 不认识的一律当 unknown：宁可多报「判不出」，也不许少报
     return value === 'ok' || value === 'watch' || value === 'bad' ? value : 'unknown';
   };
+  const levelOf = (id) => {
+    const value = indicators?.[id]?.level;
+    return typeof value === 'string' && value !== '' ? value : 'unknown';
+  };
+  // 「已知格」= 档位和严重度都判出来了（与 summary 六格口径同一把尺）。
+  // 缺一边都当判不出：宁可多报「判不出」，也不许把半截指标算成已知。
+  const knownOf = (id) => severityOf(id) !== 'unknown' && levelOf(id) !== 'unknown';
   if (INDICATOR_IDS.some((id) => severityOf(id) === 'bad')) return 'bad';
   if (INDICATOR_IDS.some((id) => severityOf(id) === 'watch')) return 'watch';
-  if (KEY_INDICATORS.every((id) => severityOf(id) === 'unknown')) return 'unknown';
+  // D8-M5 ok 门槛：已知格 ≥ 2 且 liveness 已知；达不到就落 unknown（不是 watch）
+  const knownCount = INDICATOR_IDS.filter((id) => knownOf(id)).length;
+  if (knownCount < 2 || !knownOf('liveness')) return 'unknown';
   return 'ok';
+}
+
+/**
+ * 「多格判不出」的鱼条数：六格里至少 2 格判不出的鱼（D8-M5）。
+ * 统计行要用它提醒用户：ok 档只说明「过了门槛」，不代表六格全绿。
+ * @param {Array} fishes Fish 数组
+ * @returns {number}
+ */
+export function countMultiUnknown(fishes) {
+  let count = 0;
+  for (const fish of Array.isArray(fishes) ? fishes : []) {
+    const indicators = isObject(fish?.indicators) ? fish.indicators : {};
+    const unknownCells = INDICATOR_IDS.filter((id) => {
+      const level = indicators?.[id]?.level;
+      const severity = indicators?.[id]?.severity;
+      // 与 classifyFishBucket 的「已知格」同一把尺：档位或严重度缺一边都算判不出
+      return typeof level !== 'string' || level === '' || level === 'unknown'
+        || !(severity === 'ok' || severity === 'watch' || severity === 'bad');
+    }).length;
+    if (unknownCells >= 2) count += 1;
+  }
+  return count;
 }
 
 /* ------------------------------------------------------------------ *
@@ -1039,10 +1074,11 @@ export function evaluate(pondData, options = {}) {
     noTraceCandidates,
     allNoTraceArePlugins,
   };
-  // 「认不出」= 关键两格都判不出，不是「没有这条鱼」：这句话给文本摘要垫在统计行前面，
-  // 免得用户把 4 个词里的「认不出」读成「鱼不见了」。
+  // 「认不出」= 没过 ok 门槛（存活判不出、或判得出的格不到 2 个），不是「没有这条鱼」：
+  // 这句话给文本摘要垫在统计行前面，免得用户把 4 个词里的「认不出」读成「鱼不见了」。
+  // 口径跟着 D8-M5 的门槛走（rules.rollup.unknownBucketNoteTemplate 与这里同步改）。
   const bucketNote = fishBuckets.unknown > 0
-    ? fill(templateOf(rules, 'unknownBucketNoteTemplate', '认不出 = 存活与工作量两格都判不出（不是没这条鱼）。'), {})
+    ? fill(templateOf(rules, 'unknownBucketNoteTemplate', '认不出 = 存活判不出、或判得出的格不到 2 个（不是没这条鱼）。'), {})
     : null;
   const { verdict, traceNote } = buildVerdict(rules, summary, context);
   const { footnote, degradedCount } = buildFootnote(rules, sorted);

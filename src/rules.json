@@ -67,7 +67,7 @@
     "unknownUnreadableTraceShort": "试试 --root，可能权限不对",
     "traceNoneAfterRootTemplate": "窝已指定但里面真的读不到：检查路径对不对、权限够不够、日志是不是真的写在这里。",
     "traceNoneAfterRootShort": "查路径/权限/日志在不在",
-    "unknownBucketNoteTemplate": "认不出 = 存活与工作量两格都判不出（不是没这条鱼）。",
+    "unknownBucketNoteTemplate": "认不出 = 存活判不出、或判得出的格不到 2 个（不是没这条鱼）。",
     "maxFixesPerFish": 3
   },
   "credentials": {

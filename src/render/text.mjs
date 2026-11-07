@@ -14,7 +14,7 @@
  *   → 最该做：qq-fish-01：重新登录一次，把新的 cookie/token 存回原来的位置。
  *   ※ 3 项数据读不到（liveness、health），这些项目不能当作正常。
  *   ※ 已跳过 2 个凭证类文件（不显示名称）
- *   共 4 条，活跃 1 / 疲软 1 / 死了 1 / 认不出 1。
+ *   共 4 条，活跃 1 / 疲软 1 / 坏了 1 / 认不出 1。
  *
  * 四条硬要求与做法：
  *   1. **对齐**：中文/全角/emoji 按 2 列宽、组合符与变体选择符按 0 列宽自己算，不引依赖
@@ -24,7 +24,8 @@
  *      行数超过 MAX_ROWS 时只展开前 MAX_ROWS 条（D4 已把坏的排最前），其余在统计里照样算。
  *   3. **不丢鱼**：任何一条鱼都至少出现一行；渲染单条出错就降级成「（这条鱼的报告读不出来）」，
  *      绝不让它从列表里消失 —— 消失的鱼会被当成「没有这条鱼」。
- *   4. **末尾统计**：最后一行固定是「共 N 条，活跃 X / 疲软 Y / 死了 Z / 认不出 W。」。
+ *   4. **末尾统计**：最后一行固定是「共 N 条，活跃 X / 疲软 Y / 坏了 Z / 认不出 W。」；
+ *      有多格判不出的鱼时在同一行追加「多格判不出的鱼 M 条（活跃不代表六格全绿）。」（D8-M5）。
  *
  * 这一层**只做排版**，判档与话术全部来自 D4：
  *   - 档位短名用 evaluate 导出的 BAND_LABELS（单一来源，不在这里另抄一份中文名）；
@@ -33,7 +34,9 @@
  *   - 凭证只出现聚合数量，绝不出现文件名或路径（report.skippedSensitive.names 是常量 token）。
  *
  * 统计口径：四个词是任务指定的固定词汇，按**每条鱼的总体结论**分桶 ——
- *   活跃 = severity ok｜疲软 = watch｜死了 = bad｜认不出 = unknown。
+ *   活跃 = severity ok｜疲软 = watch｜坏了 = bad｜认不出 = unknown。
+ * 「死了」不是分桶词：它只属于 liveness=dead 那一格的档位名（D8-M4），bad 档统一写「坏了」，
+ * 免得一条「依赖坏了但还活跃」的鱼同屏出现「死了」和「活跃 刚刚」两个打架的说法。
  * 为什么不按 liveness 的档位分：一条「活着但依赖全坏」的鱼按 liveness 会算成「活跃」，
  * 而报告已经把它判成 bad。这里跟报告结论保持一致，用户才不会读到两个互相打架的结论。
  *
@@ -42,7 +45,7 @@
  *   另导出排版小工具供收口测试复用：displayWidth / truncateToWidth / padToWidth / formatAgeHuman
  */
 
-import { BAND_LABELS, classifyFishBucket } from '../evaluate/index.mjs';
+import { BAND_LABELS, classifyFishBucket, countMultiUnknown } from '../evaluate/index.mjs';
 
 /* ------------------------------------------------------------------ *
  * 预算：一屏之内
@@ -582,9 +585,13 @@ function actionLines(report, fishes) {
 /**
  * 末尾统计行：四个词是固定口径，数的是**鱼的条数**。
  *
- * 分桶按关键格（evaluate 的 classifyFishBucket）：任一格坏了 → 死了；任一格要注意 →
- * 疲软；存活与工作量两格都判不出 → 认不出；否则 → 活跃。这样一条「四格有结论、
- * 只有 rhythm/deps 判不出」的鱼不会被整条划进「认不出」（D6 队长裁定）。
+ * 分桶同 evaluate 的 classifyFishBucket（D6 队长裁定 + D8-M5）：任一格坏了 → 坏了；
+ * 任一格要注意 → 疲软；没过 ok 门槛（存活判不出、或判得出的格不到 2 个）→ 认不出；
+ * 过了门槛 → 活跃。这样一条「四格有结论、只有 rhythm/deps 判不出」的鱼不会被整条
+ * 划进「认不出」，而「六格只判得出 1 格」的鱼也不会冒充「活跃」。
+ *
+ * 行尾追加「多格判不出的鱼 M 条」（M ≥ 1 才显示，D8-M5）：ok 档只说明过了门槛，
+ * 不代表六格全绿 —— 这个数就是给「活跃 N」打的预防针。
  */
 function statBuckets(fishes) {
   const buckets = { ok: 0, watch: 0, bad: 0, unknown: 0 };
@@ -593,8 +600,10 @@ function statBuckets(fishes) {
 }
 
 function statLine(fishes, buckets) {
-  return `共 ${fishes.length} 条，活跃 ${buckets.ok} / 疲软 ${buckets.watch}`
-    + ` / 死了 ${buckets.bad} / 认不出 ${buckets.unknown}。`;
+  const base = `共 ${fishes.length} 条，活跃 ${buckets.ok} / 疲软 ${buckets.watch}`
+    + ` / 坏了 ${buckets.bad} / 认不出 ${buckets.unknown}。`;
+  const multi = countMultiUnknown(fishes);
+  return multi > 0 ? `${base}多格判不出的鱼 ${multi} 条（活跃不代表六格全绿）。` : base;
 }
 
 /* ------------------------------------------------------------------ *

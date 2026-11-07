@@ -128,7 +128,8 @@ function statBucketsFromText(text) {
   const line = text.split('\n').find((row) => row.startsWith('共 '));
   assert.ok(line, '文本摘要里没有统计行');
   const match = line.match(
-    /^共 (\d+) 条，活跃 (\d+) \/ 疲软 (\d+) \/ 死了 (\d+) \/ 认不出 (\d+)。$/u,
+    // D8-M4：bad 档统一「坏了」；D8-M5：行尾可带「多格判不出的鱼 N 条」（可选）
+    /^共 (\d+) 条，活跃 (\d+) \/ 疲软 (\d+) \/ 坏了 (\d+) \/ 认不出 (\d+)。(多格判不出的鱼 \d+ 条（活跃不代表六格全绿）。)?$/u,
   );
   assert.ok(match, `统计行格式变了：${line}`);
   return { total: Number(match[1]), ok: Number(match[2]), watch: Number(match[3]), bad: Number(match[4]), unknown: Number(match[5]) };
@@ -211,7 +212,7 @@ test('【必修】分桶：liveness+throughput 能判、只有 rhythm/deps 判�
   }
   assert.equal(classifyFishBucket(blind), 'unknown');
 
-  // 任一格坏了 → 死了（优先于「活跃」）
+  // 任一格坏了 → 坏了（优先于「活跃」；D8-M4 后分桶词统一「坏了」）
   const dead = structuredClone(clone);
   dead.indicators.deps = { ...dead.indicators.deps, level: 'broken', severity: 'bad' };
   assert.equal(classifyFishBucket(dead), 'bad');
@@ -243,7 +244,7 @@ test('【必修】三处口径一致：evaluate.fishBuckets ＝ 文本统计行 
   }
   // 关键格口径：三条鱼里「认不出」的那条，必须正是六格全 unknown 的那条
   assert.equal(report.fishBuckets.unknown, 1, '只有 mystery-box 该进「认不出」');
-  assert.equal(report.fishBuckets.bad, 1, 'tired-whale 该进「死了」');
+  assert.equal(report.fishBuckets.bad, 1, 'tired-whale 该进「坏了」桶');
 });
 
 /* ------------------------------------------------------------------ *

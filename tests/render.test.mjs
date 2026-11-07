@@ -212,9 +212,9 @@ test('HTML：注入文本被转义，不许变成标签', () => {
  * 2. 文本摘要结构
  * ------------------------------------------------------------------ */
 
-test('文本：统计行口径固定（共 N 条，活跃/疲软/死了/认不出）', () => {
+test('文本：统计行口径固定（共 N 条，活跃/疲软/坏了/认不出）', () => {
   const text = renderText(makeReport(['ok', 'bad']));
-  assert.ok(text.includes('共 2 条，活跃 1 / 疲软 0 / 死了 1 / 认不出 0。'), '统计行不对');
+  assert.ok(text.includes('共 2 条，活跃 1 / 疲软 0 / 坏了 1 / 认不出 0。'), '统计行不对');
   assert.ok(text.includes('→ 最该做：'), '缺最该做一行');
   assert.ok(text.startsWith('🐟 pond-check'), '缺首行');
 });
@@ -227,7 +227,7 @@ test('文本：长度上限 —— 50 条鱼也只出一屏（行数与字符数
   assert.ok(text.length <= 6000, `字符数超上限：${text.length}`);
   // 截断提示必须在，且统计仍然按全部 50 条计（ok 13 / watch 13 / bad 12 / unknown 12）
   assert.ok(text.includes('… 还有 30 条没展开'), '缺截断提示');
-  assert.ok(text.includes('共 50 条，活跃 13 / 疲软 13 / 死了 12 / 认不出 12。'), '统计没按全部鱼计');
+  assert.ok(text.includes('共 50 条，活跃 13 / 疲软 13 / 坏了 12 / 认不出 12。'), '统计没按全部鱼计');
   // 不许把终端撕裂：无 ANSI 转义
   assert.ok(!/\x1b\[/.test(text), '出现 ANSI 转义');
 });
@@ -351,7 +351,7 @@ test('runCli --text：stdout 只有文本摘要，结尾恰好一个换行', asy
   assert.equal(code, 0);
   const out = stdout.join('');
   assert.ok(out.endsWith('\n') && !out.endsWith('\n\n'), '结尾换行数量不对');
-  assert.ok(out.includes('共 2 条，活跃 0 / 疲软 0 / 死了 0 / 认不出 2。'), '统计行不对');
+  assert.ok(out.includes('共 2 条，活跃 0 / 疲软 0 / 坏了 0 / 认不出 2。'), '统计行不对');
 });
 
 test('runCli --root：只体检这个窝（替换语义，不带自动扫的别的鱼）', async () => {

@@ -10,7 +10,8 @@
  * 硬约束（来自任务合同 + SPEC §5）：
  *   1. 单文件零外链：产物里不许出现可被当成外链引用的字样；
  *   2. 每条鱼一张卡：状态灯 + 六指标 + 一句诊断 + 一句下一步；
- *   3. 顶部总览：活跃 / 疲软 / 死了 / 认不出 各几条（数的是**鱼**）；
+ *   3. 顶部总览：活跃 / 疲软 / 坏了 / 认不出 各几条（数的是**鱼**；「死了」只留给
+ *      liveness=dead 的那一格，bad 档统一「坏了」——D8-M4）；
  *   4. viewport meta + 简单响应式；
  *   5. 底部固定声明「本报告只读、不联网、无遥测。」；
  *   6. 永不抛：报告缺字段 / 传乱参数也出一页能看的 HTML，绝不 500。
@@ -19,7 +20,7 @@
  * （D3 读取层 / D4 显示路径脱敏）就地解决，这里只负责把已脱敏的字段转义后画出来。
  */
 
-import { BAND_LABELS, INDICATOR_IDS, UNIT_LABELS, classifyFishBucket } from '../evaluate/index.mjs';
+import { BAND_LABELS, INDICATOR_IDS, UNIT_LABELS, classifyFishBucket, countMultiUnknown } from '../evaluate/index.mjs';
 
 /* ------------------------------------------------------------------ *
  * 0. 常量：全是「渲染用的展示词」，不参与任何判定
@@ -35,11 +36,11 @@ const INDICATOR_NAME_FALLBACK = Object.freeze({
   drift: '漂移',
 });
 
-/** 顶部总览四盏灯（任务合同钦定的四个词）：鱼的 severity → 人话。 */
+/** 顶部总览四盏灯（任务合同钦定的四个词，D8-M4 把 bad 档统一成「坏了」）：鱼的 severity → 人话。 */
 const OVERVIEW_LIGHTS = Object.freeze([
   { severity: 'ok', label: '活跃' },
   { severity: 'watch', label: '疲软' },
-  { severity: 'bad', label: '死了' },
+  { severity: 'bad', label: '坏了' },
   { severity: 'unknown', label: '认不出' },
 ]);
 
@@ -284,10 +285,10 @@ function bucketOf(fish) {
 }
 
 /**
- * 顶部总览四盏灯：数的是**鱼的条数**（活跃/疲软/死了/认不出）。
+ * 顶部总览四盏灯：数的是**鱼的条数**（活跃/疲软/坏了/认不出）。
  *
- * 分桶按关键格（evaluate 的 classifyFishBucket，与文本统计行、与 evaluate 层同一口径）：
- * 「四格有结论、只有 rhythm/deps 判不出」的鱼算活跃，不算认不出。
+ * 分桶与 evaluate 的 classifyFishBucket、文本统计行同一口径（D6 队长裁定 + D8-M5）：
+ * 「四格有结论、只有 rhythm/deps 判不出」的鱼算活跃；「六格只判得出 1 格」的鱼算认不出。
  */
 function overviewHtml(fishes) {
   const counts = { ok: 0, watch: 0, bad: 0, unknown: 0 };
@@ -296,6 +297,13 @@ function overviewHtml(fishes) {
   <span class="ov-count">${counts[light.severity]}</span>
   <span class="ov-label">${esc(light.label)}</span>
 </div>`).join('\n');
+}
+
+/** 多格判不出的鱼条数（D8-M5）：和文本统计行同一句话，别让人把「活跃」读成六格全绿。 */
+function multiBlindHtml(fishes) {
+  const count = countMultiUnknown(fishes);
+  if (count <= 0) return '';
+  return `<p class="summary-line">多格判不出的鱼 ${count} 条（活跃不代表六格全绿）。</p>`;
 }
 
 /** 六格统计（summary 数的是指标格，和鱼的条数是两码事，标清楚免得误读）。 */
@@ -568,6 +576,7 @@ ${overviewHtml(fishes)}
 <p class="verdict">${escOr(data.verdict, '（报告里没写总评。）')}</p>
 <p class="next-action"><span class="tag">现在该做</span>${escOr(data.nextAction, '（报告里没写下一步。）')}</p>
 ${summaryLineHtml(data.summary)}
+${multiBlindHtml(fishes)}
 ${cardsHtml}
 ${footParts.length === 0 ? '' : `<section class="foot-notes">
 ${footParts.join('\n')}

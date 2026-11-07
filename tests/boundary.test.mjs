@@ -809,7 +809,8 @@ test('所有边界产物都能渲染：HTML / 文本 / JSON 都不抛，HTML 零
   assert.ok(text.startsWith('🐟 pond-check'), '文本缺首行');
   assert.match(
     textLines.at(-1),
-    new RegExp(`^共 ${report.fishes.length} 条，活跃 \\d+ / 疲软 \\d+ / 死了 \\d+ / 认不出 \\d+。$`, 'u'),
+    // D8-M4：bad 档统一「坏了」；D8-M5：有多格判不出的鱼时行尾追加一句（可选）
+    new RegExp(`^共 ${report.fishes.length} 条，活跃 \\d+ / 疲软 \\d+ / 坏了 \\d+ / 认不出 \\d+。(多格判不出的鱼 \\d+ 条（活跃不代表六格全绿）。)?$`, 'u'),
     `文本末行不是完整统计行：${textLines.at(-1)}`,
   );
   assert.doesNotThrow(() => JSON.parse(json), '--json 输出必须能被 JSON.parse 回读');
