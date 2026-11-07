@@ -15,10 +15,14 @@
  *                 自动扫漏掉时用；与 --root / --log 可任意组合
  *   --fish <名字> 只体检指定的一条鱼（按 id / 窝路径 / 目录名做不区分
  *                 大小写的子串匹配；常与 --root 连用）
+ *   --force       允许覆盖 --out 已存在的报告文件（默认拒绝，防静默覆盖）
  *   --help        用法
  *
  * 退出码：0 = 正常（**扫到 0 条鱼也是 0**）；2 = 参数用错；1 = 真异常
- * （读取/渲染整段崩了、HTML 写不出去）。
+ * （读取/渲染整段崩了、HTML 写不出去、环境不支持）。
+ *
+ * 平台：v0.1 只在 Linux 上验证过。Windows 会**明确拒绝**（不扫描、不出报告），
+ * 而不是照常跑出一份误导性的结论 —— 见 runCli 开头的 win32 早退。
  *
  * 只读承诺：扫描只 stat/读文件；本工具唯一写的文件就是它自己的报告输出。
  * 不装插件、不改配置、不启停进程、不联网、无遥测。
@@ -48,6 +52,8 @@ export const USAGE = `pond-check · 鱼况体检 —— 只读扫描机器上在
 用法：
   pond-check                  扫描 + 生成 HTML 报告到当前目录，打印文件路径
   pond-check --out <路径>     指定 HTML 报告的输出路径（只作用于 HTML）
+  pond-check --force          允许覆盖 --out 已存在的报告文件
+                              （默认拒绝覆盖，防手滑；符号链接一律不写穿）
   pond-check --json           stdout 只输出 JSON（完整报告，机器读）
   pond-check --text           stdout 只输出可贴群的文本摘要（人读）
   pond-check --root <路径>    指定鱼的窝（stateRoot）：只体检这个窝。
@@ -61,7 +67,8 @@ export const USAGE = `pond-check · 鱼况体检 —— 只读扫描机器上在
                               做不区分大小写的子串匹配；常与 --root 连用。
   pond-check --help           显示本用法
 
-退出码：0 = 正常（扫到 0 条鱼也是 0）；2 = 参数用错；1 = 真异常。
+退出码：0 = 正常（扫到 0 条鱼也是 0）；2 = 参数用错；1 = 真异常（含环境不支持）。
+平台：v0.1 只支持 Linux；Windows（win32）会明确报「不支持」并退出，不扫描、不出报告。
 
 只读承诺：只读扫描、不装插件、不改配置、不启停进程、不联网、无遥测。
 HTML 报告是单文件、零外链，可以直接发给别人打开。
@@ -75,13 +82,15 @@ HTML 报告是单文件、零外链，可以直接发给别人打开。
  * 解析命令行参数。
  * @param {string[]} argv 不含 node 与脚本路径的参数表
  * @returns {{ok:boolean, mode:'html'|'json'|'text'|'help', out:string|null,
- *            root:string|null, fish:string|null, errors:string[]}}
+ *            force:boolean, root:string|null, log:string|null, dedupe:string|null,
+ *            fish:string|null, errors:string[]}}
  */
 export function parseCliArgs(argv) {
   const out = {
     ok: true,
     mode: 'html',
     out: null,
+    force: false,
     root: null,
     log: null,
     dedupe: null,
@@ -100,6 +109,9 @@ export function parseCliArgs(argv) {
       wantJson = true;
     } else if (arg === '--text') {
       wantText = true;
+    } else if (arg === '--force') {
+      // 开关型参数：只有它能放行「覆盖已存在的报告文件」（D8-M2）
+      out.force = true;
     } else if (arg === '--out' || arg === '--root' || arg === '--log'
       || arg === '--dedupe' || arg === '--fish') {
       const value = args[i + 1];
@@ -266,6 +278,75 @@ function defaultReportName(nowMs) {
     + `-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}.html`;
 }
 
+/** 本工具自己的报告文件名形态 —— 只用来在拒绝文案里多给一句提示，不用于放行。 */
+const OWN_REPORT_NAME = /^pond-check-.*\.html$/iu;
+
+/**
+ * 写盘前的安全闸（D8-M2）。
+ *
+ * 背景：D8 边界审查实测 `--out <已有文件>` 会静默覆盖，把用户的
+ * `DO NOT TOUCH` 文件写成 9008 B 的 HTML —— 本工具唯一写盘的动作，绝不能
+ * 变成数据事故。所以规则是**默认拒绝，显式 --force 才覆盖**：
+ *
+ *   1. 目标已存在（普通文件 / 目录 / 符号链接）→ 默认拒绝；
+ *   2. 目标是符号链接 → **连 --force 也不写穿**：`writeFileSync` 会顺着链接
+ *      写到别处（`--out report.html` 指向 `~/.bashrc` 的链接就能改家目录文件），
+ *      这种风险不该被一个「覆盖报告」的开关顺手带出来；
+ *   3. 目标父目录不存在 → 放行（writeFile 会递归建，便利功能保留）；
+ *      父目录是个文件 → 明确报错，别让 mkdir 抛一句看不懂的 ENOTDIR。
+ *
+ * 闸放在 runCli 里而不是默认 writeFile 里：测试注入的假 writer 也绕不过去，
+ * 而且能在**扫描之前**就拒绝 —— 用户不必等一轮扫描才知道路径不能用。
+ *
+ * @param {string} target 已解析成绝对路径的报告目标
+ * @param {{force?:boolean}} [options]
+ * @returns {string|null} 拒绝理由（给 stderr 的多行中文）；null = 可以写
+ */
+export function checkWriteTarget(target, options = {}) {
+  const force = options.force === true;
+
+  // lstat 不跟链接：要看见「目标本身是链接」这件事，stat 会把它藏起来
+  let info = null;
+  try {
+    info = fs.lstatSync(target);
+  } catch (err) {
+    const code = err?.code;
+    // 不存在（ENOENT）、或父级根本不是目录（ENOTDIR，交给下面父目录那道闸说清楚）
+    if (code !== 'ENOENT' && code !== 'ENOTDIR') {
+      return `没法确认报告目标能不能写（${String(err?.message ?? err)}）：${target}`;
+    }
+  }
+
+  if (info !== null) {
+    if (info.isSymbolicLink()) {
+      return `目标是个符号链接，不写穿：${target}\n`
+        + '  顺着链接写可能把别处的文件覆盖掉，所以这条**连 --force 也不放行**。\n'
+        + '  真要写这个位置：先删掉链接，或换一个输出路径。';
+    }
+    if (info.isDirectory()) {
+      return `目标是目录，不是文件：${target}\n  换个输出路径（--out 只写单个 HTML 文件）。`;
+    }
+    if (!force) {
+      const looksOwn = OWN_REPORT_NAME.test(path.basename(target));
+      return `目标文件已存在，拒绝覆盖：${target}\n`
+        + '  加 --force 覆盖，或换一个输出路径。'
+        + (looksOwn ? '（像个本工具上一次的报告；确认没用就加 --force。）' : '');
+    }
+  }
+
+  const parent = path.dirname(target);
+  let parentInfo = null;
+  try {
+    parentInfo = fs.statSync(parent);
+  } catch {
+    parentInfo = null; // 不存在：放行，writeFile 会递归建（便利功能）
+  }
+  if (parentInfo !== null && !parentInfo.isDirectory()) {
+    return `父目录不是目录（是个文件）：${parent}\n  报告没写，换个输出路径。`;
+  }
+  return null;
+}
+
 /* ------------------------------------------------------------------ *
  * 4. 主流程
  * ------------------------------------------------------------------ */
@@ -294,6 +375,10 @@ export async function runCli(argv, deps = {}) {
     stderr: deps.stderr ?? ((text) => process.stderr.write(text)),
     cwd: typeof deps.cwd === 'string' && deps.cwd !== '' ? deps.cwd : process.cwd(),
     now: Number.isFinite(deps.now) ? deps.now : Date.now(),
+    // 可注入：测试不必真在 Windows 上跑就能验证早退（D8-M6）
+    platform: typeof deps.platform === 'string' && deps.platform !== ''
+      ? deps.platform
+      : process.platform,
   };
   const say = (text) => d.stdout(String(text));
   const warn = (text) => d.stderr(`pond-check：${String(text)}\n`);
@@ -308,6 +393,31 @@ export async function runCli(argv, deps = {}) {
       for (const message of parsed.errors) warn(message);
       warn('用法看这里：pond-check --help');
       return 2;
+    }
+
+    // D8-M6：Windows 明确拒绝，而不是照常跑出一份「假装扫过了」的报告。
+    // v0.1 的探测/读取/判定只在 Linux 上验证过，在 win32 上继续跑等于给出
+    // 误导性结论 —— 所以这里早退：不扫描、不渲染、不写盘。
+    if (d.platform === 'win32') {
+      warn('v0.1 不支持 Windows（platform=win32）。'
+        + '为了不给你一份没扫过却像扫过的报告，这次没有扫描，也没有写任何文件。');
+      warn('请在 Linux 上运行（macOS 尚未验证）。');
+      return 1;
+    }
+
+    // D8-M2：HTML 目标先过写盘安全闸，再扫描 —— 路径不能用就别让人白等一轮。
+    // 安全闸只有这一道，放在扫描之前；--json / --text 不写盘，不适用。
+    const htmlTarget = parsed.mode === 'html'
+      ? (parsed.out !== null
+        ? path.resolve(d.cwd, parsed.out)
+        : path.join(d.cwd, defaultReportName(d.now)))
+      : null;
+    if (htmlTarget !== null) {
+      const refusal = checkWriteTarget(htmlTarget, { force: parsed.force });
+      if (refusal !== null) {
+        warn(refusal);
+        return 1;
+      }
     }
 
     const { ponds, filterMiss } = buildPonds(parsed, d, warn);
@@ -331,10 +441,8 @@ export async function runCli(argv, deps = {}) {
       return 0;
     }
 
-    // 默认：HTML 报告写盘 + 打印文件路径
-    const target = parsed.out !== null
-      ? path.resolve(d.cwd, parsed.out)
-      : path.join(d.cwd, defaultReportName(d.now));
+    // 默认：HTML 报告写盘 + 打印文件路径（target 已在扫描前过完安全闸）
+    const target = htmlTarget;
     d.writeFile(target, d.renderHtml(report));
     say(`${target}\n`);
     return 0;
