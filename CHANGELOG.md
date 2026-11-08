@@ -9,6 +9,55 @@
 
 暂无变更。
 
+## [0.2.1] - 2026-11-08
+
+第三期：借鉴 Ombre Brain 的记忆机制，改四处。改动全部落在能力层记忆（`src/memory/`）与文档，
+**诊断层与 v0.2.0 逐字节一致**（`src/discover` `src/read` `src/evaluate` `src/render` `src/cli.mjs`
+`src/rules.json` 一个字节没动），`pond-check` 的体检行为不变。
+
+410 tests 全绿（v0.2.0 是 393）；零运行时依赖仍成立（存储仍是内置 `node:sqlite`）。
+四项都补了回归测试，并逐项做了变异验证（把保护改坏，对应用例必须红，验完已还原）。
+
+### Changed
+
+- **① 遗忘是淡去，不是删除**：`forget(id)` 从硬删改为**归档**（`archived = 1`）——日常 `recall()`
+  与 C3 唤醒都看不到它，`recall(q, { includeArchived: true })` / `export({ includeArchived: true })`
+  还能找回来，且**不改 `updated_at`**（不是「更新」，是「淡出」）。幂等：对已归档的 id 再忘一次返回
+  `action: 'already-archived'`，不存在的 id 返回 `'missing'`，都不报错。真删见下方 `purge()`。
+- **② importance = 5 设硬上限 20 条**：沉淀流程在原有三闸之后加**配额闸**。写满后
+  `remember({ importance: 5 })` 明确返回 `recorded: false` + `reason: 'importance-quota-full'` +
+  `quota { limit, used, remaining, entries }`（现役 5 分清单，摘要 ≤40 字），
+  **绝不静默降成 4 分落库**——静默降级等于骗调用方「必须记住」生效了。只有「新增一个 5 分位」才占名额：
+  合并进已是 5 分的旧条目不占；归档（不再参与日常召回）的条目也不占。配额只管 5 分，不限制总条数。
+- **④ 「用了哪个通道」与「是不是降级」分开报**：`recall()` 结果带
+  `channels { keyword: 'fts'|'scan'|'none', semantic: false }`（能力声明，事实）与
+  `degradation { channel, reason } | null`（降级判断）。真降级只有两种：
+  `fts-unavailable`（FTS 索引坏了 → 全表扫描）与 `scan-fallback`（存储降级为易失后端，没有 FTS）；
+  `reason` 是中文人话，明说「这次只是关键词命中」。正常路径 `degradation === null`——
+  永远报警等于没报警，v0.2.1 的 FTS 关键词通道就是它的完整能力，不是退化。
+  数组上挂非枚举的 `degraded` / `degradation` / `channels`（老调用方 `.map()` / `length` 照旧，
+  不进 JSON / deepEqual 视野）；要显式拿元信息用 `{ withMeta: true }`，返回
+  `{ items, degraded, degradation, channels }`；事件流随 `degradationChannel` 记账（正常路径为 `null`）。
+
+### Added
+
+- **① `purge(id, { actor })`**：唯一会丢数据的入口，不可逆。事件流写**不可忽略的审计**：
+  `actor`（实例 `actor`，缺省 `'local'`，可覆盖）/ `ts` / `irreversible: true` /
+  `deleted { id, kind, contentPreview, contentLength, contentDigest(sha256 前 16), importance, createdAt, … }`；
+  返回值里的 `audit` 带同一条。**只有真删掉才写摘要**——删失败却留一条「删了什么」，审计就撒谎了。
+- **③ schema v2：`valence` / `arousal` 两列（只存不算分）**：Russell 情感坐标，
+  `valence` −1..1、`arousal` 0..1，**可空**（NULL = 不知道，不拿 0 冒充中性）；越界 / 非数字抛 `TypeError`；
+  合并时新值优先、候选没给就保留旧值；`recall()` 与 `export()` 带出。
+  **预留字段，当前不参与排序**：`FACTOR_WEIGHTS` 仍是 relevance / freshness / importance / penalty 四因子，
+  `why` 里不出现，测试钉住「除情感坐标外完全相同的两条记忆得分完全一致」。
+- **③ 迁移 v1 → v2**：用新代码打开 v0.2.0 的旧 `memory.db` 时，按 `pragma_table_info` **逐列检查**
+  （判据是列是否存在，不是 `user_version`——外部工具可能改过版本号）后
+  `ALTER TABLE ADD COLUMN`；旧行两列保持 NULL、**一条记忆都不丢、不重写任何行**，FTS 索引照旧可用。
+  `user_version` 升到 2，事件流记 `op: 'migrate'` 列出补了哪两列；重开不重复迁移。
+- **② `setImportance(id, n)` / `importanceQuota()`**：配额写满后的合法出路——先把某条降级腾位再写。
+  升到 5 同样受配额约束（不许绕过 `remember()` 那道闸），被拒时同样返回
+  `importance-quota-full` + 现役清单，不静默失败。
+
 ## [0.2.0] - 2026-11-08
 
 第二期：能力层（C1–C7）。`docs/CAPABILITIES-SPEC.md` 里那份「未实现的设计稿」现在全部落地了。

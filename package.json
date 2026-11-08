@@ -1,6 +1,6 @@
 {
   "name": "pond-check",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "扫一遍你机器上所有在跑的鱼，出一页体检报告：谁活着、干了啥、哪儿坏了、怎么修。",
   "type": "module",
   "bin": {
