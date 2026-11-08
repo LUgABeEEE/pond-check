@@ -15,11 +15,44 @@
  * 隐私铁律：整库只在本地，没有同步、没有备份、没有遥测；删掉 POND_HOME
  * 就回到初始状态（CAPABILITIES-SPEC §3.6 / §6.3）。
  *
+ * v0.2.1 schema v2 的两处增量（**都必须能平滑升级 v0.2.0 的旧库**）：
+ *   1. memories 加 `valence` / `arousal`（情感坐标，只存不算分，见 MIGRATION_COLUMNS）
+ *   2. 新建库直接带上两列；旧库由 store.mjs 的 migrateSchema() 逐列 ALTER 补齐，
+ *      旧行两列为 NULL，一条记忆都不丢。
+ *
  * 硬约束：不联网、不写盘、零依赖；DDL 以字符串形式导出，由 store.mjs 执行。
  */
 
 /** 记忆库文件名（位于 <POND_HOME> 下）。 */
 export const MEMORY_DB_FILE_NAME = 'memory.db';
+
+/**
+ * 当前 schema 版本（写进 `PRAGMA user_version`）。
+ *
+ *   v1  v0.2.0 的首版：memories 主表 + FTS5 + 四索引，无 valence/arousal
+ *   v2  v0.2.1：memories 加 valence / arousal 两列（情感坐标，**只存不算分**）
+ *
+ * 版本号只用于审计与迁移记录；**迁移的判据是列是否存在**（pragma_table_info），
+ * 不是版本号——外部工具可能改过 user_version，列才是事实。
+ */
+export const SCHEMA_VERSION = 2;
+
+/**
+ * v1 → v2 的增量列。打开旧库（v0.2.0 的 memory.db）时逐列检查并
+ * `ALTER TABLE memories ADD COLUMN`，旧行的新列保持 NULL，一条记忆都不丢。
+ *
+ * valence / arousal 是 Russell 情感坐标（借鉴 Ombre Brain）：
+ *   valence  效价 −1（极负面）.. 1（极正面），NULL = 未知
+ *   arousal  唤醒度 0（平静）.. 1（激动），NULL = 未知
+ *
+ * **预留字段：只存不算分。** 它们绝不进四因子公式（scoring.mjs 的
+ * FACTOR_WEIGHTS 里没有、scoreRow 也不读），召回排序与它们无关——
+ * 现在存只是为了将来有足够数据时再决定怎么用，不许先斩后奏。
+ */
+export const MIGRATION_COLUMNS = Object.freeze([
+  Object.freeze({ name: 'valence', type: 'REAL' }),
+  Object.freeze({ name: 'arousal', type: 'REAL' }),
+]);
 
 /**
  * 三类记忆。半衰期单位：天。
@@ -51,6 +84,25 @@ export const DEFAULT_CONFIDENCE = 0.8;
 /** importance 合法范围。 */
 export const MIN_IMPORTANCE = 1;
 export const MAX_IMPORTANCE = 5;
+
+/**
+ * importance = 5 的硬配额（借鉴 Ombre Brain：重要的东西必须稀缺）。
+ *
+ * 一旦所有事都是 5 分，四因子里的「重要性」这一项就等于常数——
+ * 排序退化，用户也没法靠重要性找回真正要紧的事。所以 5 分条目不设软提示，
+ * 而是**硬上限**：写满之后 remember() 直接返回 `importance-quota-full`
+ * 并附上现役 5 分条目清单，**绝不静默降级成 4 分**（静默降级等于骗调用方）。
+ *
+ * 配额只针对 `importance === 5`，不是所有记忆的总量上限。
+ * 已归档（archived=1）的条目不占配额——淡出的东西不该继续占着稀缺位。
+ */
+export const MAX_TOP_IMPORTANCE_ENTRIES = 20;
+
+/** 配额的机器可读描述（事件、返回值、测试共用同一份数字）。 */
+export const IMPORTANCE_QUOTA = Object.freeze({
+  importance: MAX_IMPORTANCE,
+  limit: MAX_TOP_IMPORTANCE_ENTRIES,
+});
 
 /**
  * @param {unknown} value
@@ -121,7 +173,9 @@ CREATE TABLE IF NOT EXISTS memories (
   last_recalled INTEGER,
   recall_count  INTEGER NOT NULL DEFAULT 0,
   ttl_days      INTEGER,
-  archived      INTEGER NOT NULL DEFAULT 0
+  archived      INTEGER NOT NULL DEFAULT 0,
+  valence       REAL,
+  arousal       REAL
 );
 
 CREATE INDEX IF NOT EXISTS idx_memories_kind ON memories(kind);

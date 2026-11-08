@@ -13,7 +13,12 @@
  *
  * 行对象统一 camelCase（DB 列是 snake_case，映射只发生在这里）：
  *   { id, kind, content, entities[], importance, confidence, source, sourceRef,
- *     createdAt, updatedAt, lastRecalled, recallCount, ttlDays, archived }
+ *     createdAt, updatedAt, lastRecalled, recallCount, ttlDays, archived,
+ *     valence, arousal }
+ *
+ *   valence / arousal 是 v0.2.1 新增的情感坐标（v1 旧库里没有这两列，由
+ *   migrateSchema() 打开时补齐）。**只存不算分**：它们不出现在 scoring.mjs 的
+ *   四因子公式里，写进来只是为了将来有数据可用。
  *
  * search(tokens) 返回 { mode, hits }：
  *   mode 'fts'  → BM25，hits: [{ id, raw }]，raw = -bm25（越大越相关）
@@ -30,7 +35,13 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
 import { resolvePondHome } from '../shared/paths.mjs';
-import { MEMORY_DB_FILE_NAME, SCHEMA_SQL, FTS_SCHEMA_SQL } from './schema.mjs';
+import {
+  MEMORY_DB_FILE_NAME,
+  SCHEMA_SQL,
+  FTS_SCHEMA_SQL,
+  MIGRATION_COLUMNS,
+  SCHEMA_VERSION,
+} from './schema.mjs';
 import { segmentText, buildMatchExpr } from './text.mjs';
 
 /** provider id：事件流里记账用（本地能力，成本恒 0）。 */
@@ -40,7 +51,7 @@ export const VOLATILE_PROVIDER = 'memory-volatile';
 const COLUMNS = `
   id, kind, content, entities, importance, confidence,
   source, source_ref, created_at, updated_at, last_recalled,
-  recall_count, ttl_days, archived
+  recall_count, ttl_days, archived, valence, arousal
 `;
 
 /** @param {object} row DB 行（snake_case） → API 行（camelCase） */
@@ -68,6 +79,9 @@ function rowFromDb(row) {
     recallCount: Number(row.recall_count),
     ttlDays: row.ttl_days == null ? null : Number(row.ttl_days),
     archived: Number(row.archived) === 1,
+    // 情感坐标：NULL 保持 null（旧数据升级后就是这样），不拿 0 冒充「中性」
+    valence: row.valence == null ? null : Number(row.valence),
+    arousal: row.arousal == null ? null : Number(row.arousal),
   };
 }
 
@@ -91,6 +105,8 @@ function columnsFromPatch(patch) {
     recallCount: 'recall_count',
     ttlDays: 'ttl_days',
     archived: 'archived',
+    valence: 'valence',
+    arousal: 'arousal',
   };
   const sets = [];
   const values = [];
@@ -122,6 +138,9 @@ export class SqliteStore {
     // 触发器里的 segment() 必须先注册再建表/写入，否则第一次插入就炸。
     this.db.function('segment', { deterministic: true }, (text) => segmentText(text));
     this.db.exec(SCHEMA_SQL);
+    // v0.2.0 的旧库已经有 memories 主表：CREATE TABLE IF NOT EXISTS 不会给它
+    // 补列，必须显式迁移。迁移只加列、不改旧行——旧数据一条都不丢。
+    this.migrations = migrateSchema(this.db);
   }
 
   /** @returns {number} 新行 id */
@@ -130,8 +149,9 @@ export class SqliteStore {
       const result = this.db.prepare(`
         INSERT INTO memories
           (kind, content, entities, importance, confidence, source, source_ref,
-           created_at, updated_at, last_recalled, recall_count, ttl_days, archived)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           created_at, updated_at, last_recalled, recall_count, ttl_days, archived,
+           valence, arousal)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         row.kind,
         row.content,
@@ -146,6 +166,9 @@ export class SqliteStore {
         row.recallCount ?? 0,
         row.ttlDays ?? null,
         row.archived ? 1 : 0,
+        // 情感坐标可空：NULL 表示「不知道」，不是 0
+        row.valence ?? null,
+        row.arousal ?? null,
       );
       return this.get(Number(result.lastInsertRowid));
     });
@@ -349,6 +372,47 @@ function scanRows(rows, tokens) {
     if (matched.length > 0) hits.push({ id: row.id, matched });
   }
   return { mode: 'scan', hits };
+}
+
+/**
+ * 把旧库（v1，v0.2.0 建的）平滑升级到 v2：补齐 MIGRATION_COLUMNS 里缺的列。
+ *
+ * 判据是 **pragma_table_info 里列是否存在**，不是 user_version——外部 sqlite3
+ * 工具可能动过版本号，列才是事实。只做 `ALTER TABLE ... ADD COLUMN`：
+ * SQLite 给旧行的新列填 NULL，不重写任何一行，不会丢数据。
+ * 返回值是本次真正执行了的迁移（新建库时为空数组），memory.mjs 会把它写进事件流。
+ *
+ * @param {DatabaseSync} db 已建好主表的连接
+ * @returns {{column: string, type: string, from: 'v1', to: 'v2'}[]} 本次执行的迁移
+ */
+export function migrateSchema(db) {
+  const applied = [];
+  let existing = new Set();
+  try {
+    existing = new Set(
+      db.prepare("SELECT name FROM pragma_table_info('memories')").all().map((row) => String(row.name)),
+    );
+  } catch {
+    // 主表都读不到说明库坏了：交给上层（openStore → 易失降级），这里不吞
+    throw new Error('memories 主表不可读，无法判断迁移');
+  }
+
+  for (const column of MIGRATION_COLUMNS) {
+    if (existing.has(column.name)) continue;
+    // 列名与类型来自模块常量（不是外部输入），拼接是安全的
+    db.exec(`ALTER TABLE memories ADD COLUMN ${column.name} ${column.type}`);
+    applied.push({ column: column.name, type: column.type, from: 'v1', to: 'v2' });
+  }
+
+  try {
+    const row = db.prepare('SELECT user_version AS version FROM pragma_user_version').get();
+    const version = Number(row?.version ?? 0);
+    if (version < SCHEMA_VERSION) db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+  } catch {
+    // user_version 只是审计信息，读不到不影响记忆功能
+  }
+
+  return applied;
 }
 
 /**

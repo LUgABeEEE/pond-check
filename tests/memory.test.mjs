@@ -11,6 +11,17 @@
  *      存储坏了返回 storage-error 不炸调用方
  *   6. 红线：src/memory 不 import 任何网络模块、不 fetch（守卫自带金丝雀）
  *
+ * v0.2.1 记忆层四处改动（借鉴 Ombre Brain）各自的回归测试在 §7（①归档/purge、
+ * ③valence/arousal）、§11（②importance=5 配额）、§12（④召回降级细分）：
+ *   ① forget=归档（可 includeArchived 找回），purge 才真删且留不可忽略审计，
+ *      export 把归档与现存分开
+ *   ② importance=5 硬上限 20：超了返回 importance-quota-full + 清单，不静默降级；
+ *      降级 / purge 之后能再写
+ *   ③ memories 加 valence/arousal：只存不算分（四因子公式不受影响）；
+ *      旧库迁移在 tests/memory-migration.test.mjs
+ *   ④ degradation.channel 说明这次召回退化在哪一段（keyword-only /
+ *      fts-unavailable / scan-fallback），完整召回才是 null
+ *
  * 验收门（任务书原话）：
  *   node --test tests/memory.test.mjs 全绿；覆盖三类各写各读、相似候选不重复记、
  *   四因子各自能主导排序、recall_count 增加后权重下降、export 可回读。
@@ -35,6 +46,9 @@ import {
   remember,
   recall,
   forget,
+  purge,
+  setImportance,
+  importanceQuota,
   exportMemories,
   KINDS,
   KIND_HALF_LIFE_DAYS,
@@ -42,6 +56,9 @@ import {
   SCORE_FORMULA,
   SCAN_RELEVANCE_CAP,
   SIMILARITY_THRESHOLD,
+  MAX_TOP_IMPORTANCE_ENTRIES,
+  IMPORTANCE_QUOTA,
+  DEGRADATION_CHANNELS,
   freshnessFactor,
   importanceFactor,
   penaltyFactor,
@@ -520,18 +537,208 @@ test('召回·FTS 查询词里的运算符只当字面量，不许被注入成�
  * 7. forget / export
  * ------------------------------------------------------------------ */
 
-test('forget：删掉的不再召回不再导出；不存在的 id 返回 forgotten:false', () => {
-  const { memory } = makeMemory('forget');
+/* ------------------------------------------------------------------ *
+ * 7. ① 归档语义 / ③ 情感坐标 / export
+ * ------------------------------------------------------------------ */
+
+test('① forget 是归档不是删除：日常召回看不到，includeArchived 还能找到，幂等', () => {
+  const { memory } = makeMemory('forget-archive');
   const result = memory.remember({ content: '主人讨厌香菜', kind: 'preference' });
+  assert.throws(() => memory.forget('x'), TypeError);
 
   const missing = memory.forget(999);
   assert.equal(missing.forgotten, false);
-  assert.throws(() => memory.forget('x'), TypeError);
+  assert.equal(missing.archived, false);
+  assert.equal(missing.action, 'missing');
 
   const gone = memory.forget(result.id);
   assert.equal(gone.forgotten, true);
-  assert.equal(memory.recall('香菜', { minScore: 0 }).length, 0, '删掉的记忆不许再被召回');
-  assert.equal(memory.export(), '', '删掉的记忆不许再被导出');
+  assert.equal(gone.archived, true, 'forget 必须是归档（archived=1），不是删除');
+  assert.equal(gone.action, 'archived');
+  assert.equal(gone.memory.archived, true, '返回的行要反映归档状态');
+  assert.equal(gone.memory.content, '主人讨厌香菜', '归档不许改内容');
+
+  // 日常召回隐藏，includeArchived 找回——「淡出」的全部含义就在这里
+  assert.equal(memory.recall('香菜', { minScore: 0 }).length, 0, '归档的记忆不许再出现在日常召回里');
+  const archived = memory.recall('香菜', { minScore: 0, includeArchived: true });
+  assert.equal(archived.length, 1, 'recall(includeArchived:true) 必须还能找回归档的记忆');
+  assert.equal(archived[0].id, result.id);
+  assert.equal(archived[0].archived, true, '召回结果要带 archived 标记');
+
+  // 幂等：再忘一次不报错、不重复计数
+  const again = memory.forget(result.id);
+  assert.equal(again.forgotten, true);
+  assert.equal(again.action, 'already-archived');
+  assert.throws(() => memory.forget(1.5), TypeError);
+  memory.close();
+});
+
+test('① purge 才真删：删除不可逆，事件流留下「谁/何时/删了什么摘要」的审计', () => {
+  const { memory, home } = makeMemory('purge-audit');
+  const kept = memory.remember({ content: '主人住在杭州', kind: 'fact' });
+  const doomed = memory.remember({ content: '主人讨厌香菜', kind: 'preference', importance: 4 });
+
+  // 归档之后 purge 仍然必须真的删掉（归档不是删除的保护伞）
+  memory.forget(doomed.id);
+  const archivedHits = () => memory.recall('香菜', { minScore: 0, includeArchived: true })
+    .filter((item) => item.id === doomed.id);
+  assert.equal(archivedHits().length, 1, '归档之后 includeArchived 还能找到');
+
+  const result = memory.purge(doomed.id, { actor: '主人' });
+  assert.equal(result.purged, true);
+  assert.equal(result.deleted.id, doomed.id);
+  assert.equal(result.deleted.kind, 'preference');
+  assert.match(result.deleted.contentPreview, /香菜/u, '审计里要有内容摘要');
+  assert.equal(result.deleted.contentDigest.length, 16, '摘要指纹是 sha256 前 16 位');
+  assert.equal(typeof result.deleted.createdAt, 'number');
+
+  assert.equal(archivedHits().length, 0, 'purge 之后连归档里都不该再有');
+  assert.equal(memory.export({ includeArchived: true }).trim().split('\n').length, 1,
+    'purge 之后导出里不该再有它');
+
+  // 审计事件：不可忽略 = 谁、何时、删了什么摘要、且显式标不可逆
+  const audit = lastEventOf(home, 'purge');
+  assert.ok(audit, 'purge 必须在事件流里留一条记录');
+  assert.equal(audit.action, 'purged');
+  assert.equal(audit.actor, '主人', '审计必须记下是谁删的');
+  assert.ok(Number.isFinite(Date.parse(audit.ts)), '审计必须有可解析的时间');
+  assert.equal(audit.irreversible, true, 'purge 必须在事件里标成不可逆');
+  assert.equal(audit.deleted.id, doomed.id);
+  assert.equal(audit.deleted.contentDigest, result.deleted.contentDigest);
+  assert.equal(audit.units, 1);
+  assert.equal(result.audit.deleted.contentDigest, result.deleted.contentDigest,
+    '返回值里要带回审计条目，调用方可以直接展示');
+
+  // 不存在的 id：不炸、不写 purged
+  const missing = memory.purge(9999);
+  assert.equal(missing.purged, false);
+  assert.equal(missing.deleted, null);
+  assert.equal(lastEventOf(home, 'purge').action, 'missing');
+  assert.throws(() => memory.purge('x'), TypeError);
+
+  assert.equal(memory.export().trim().split('\n').length, 1, '留下的那条不受影响');
+  assert.equal(kept.recorded, true);
+  memory.close();
+});
+
+test('① export 区分现存与归档：默认只出现存，includeArchived 追加归档块，split 给两段', () => {
+  const { memory } = makeMemory('export-archived');
+  memory.remember({ content: '主人住在杭州', kind: 'fact' });
+  const archived = memory.remember({ content: '昨天一起看了芙莉莲', kind: 'episode' });
+  memory.forget(archived.id);
+
+  const activeOnly = memory.export().trim().split('\n').map((line) => JSON.parse(line));
+  assert.deepEqual(activeOnly.map((row) => row.content), ['主人住在杭州'], '默认导出不许混进归档的');
+
+  const all = memory.export({ includeArchived: true }).trim().split('\n').map((line) => JSON.parse(line));
+  assert.equal(all.length, 2);
+  assert.equal(all[0].archived, false, '现存的排前面');
+  assert.equal(all[1].archived, true, '归档的单独跟在后面，不交错');
+
+  const split = memory.export({ split: true });
+  assert.deepEqual(split.counts, { active: 1, archived: 1 });
+  assert.equal(split.active.trim().split('\n').length, 1);
+  assert.equal(split.archived.trim().split('\n').length, 1);
+  assert.equal(JSON.parse(split.archived.trim()).content, '昨天一起看了芙莉莲');
+
+  // 全归档：默认导出为空串，但仍能在 includeArchived 里找到
+  memory.forget(activeOnly[0].id);
+  assert.equal(memory.export(), '', '现存为零时默认导出为空');
+  assert.equal(memory.export({ split: true }).counts.active, 0);
+  assert.equal(memory.export({ split: true }).counts.archived, 2);
+  memory.close();
+});
+
+test('③ valence / arousal：存得进、召回带得出、导得出，默认 NULL', () => {
+  const { memory, home } = makeMemory('affect');
+  const scored = memory.remember({
+    content: '主人讨厌香菜',
+    kind: 'preference',
+    valence: -0.8,
+    arousal: 0.4,
+  });
+  assert.equal(scored.recorded, true);
+  assert.equal(scored.memory.valence, -0.8);
+  assert.equal(scored.memory.arousal, 0.4);
+
+  const plain = memory.remember({ content: '主人住在杭州', kind: 'fact' });
+  assert.equal(plain.memory.valence, null, '没给就是 NULL，不拿 0 冒充中性');
+  assert.equal(plain.memory.arousal, null);
+
+  const [hit] = memory.recall('香菜', { minScore: 0 });
+  assert.equal(hit.valence, -0.8);
+  assert.equal(hit.arousal, 0.4);
+  const [plainHit] = memory.recall('杭州', { minScore: 0 });
+  assert.equal(plainHit.valence, null);
+  assert.equal(plainHit.arousal, null);
+
+  // 走库再读一次（不是内存里的对象残留）
+  assert.equal(memory.recall('香菜', { minScore: 0, includeArchived: true })[0].valence, -0.8);
+
+  const exported = memory.export().trim().split('\n').map((line) => JSON.parse(line));
+  const exportedScored = exported.find((row) => row.content === '主人讨厌香菜');
+  assert.equal(exportedScored.valence, -0.8);
+  assert.equal(exportedScored.arousal, 0.4);
+  assert.equal(exported.find((row) => row.content === '主人住在杭州').valence, null);
+
+  // 合并时：新值优先，没给就保留旧值（不抹掉已知情绪）
+  const merged = memory.remember({ content: '主人讨厌香菜。', kind: 'preference' });
+  assert.equal(merged.action, 'merged');
+  assert.equal(merged.memory.valence, -0.8, '合并没给 valence 时必须保留旧值');
+  const overridden = memory.remember({
+    content: '主人讨厌香菜！', kind: 'preference', valence: -0.2, arousal: 0.1,
+  });
+  assert.equal(overridden.memory.valence, -0.2, '合并给了新值就用新值');
+
+  assert.ok(fs.existsSync(path.join(home, 'memory.db')));
+  memory.close();
+});
+
+test('③ valence / arousal 越界抛 TypeError（编程错误不伪装成能力不可用）', () => {
+  const { memory } = makeMemory('affect-type');
+  const base = { content: '好内容样本', kind: 'fact' };
+  for (const valence of [-1.01, 1.01, Number.NaN, Number.POSITIVE_INFINITY, '0.5']) {
+    assert.throws(() => memory.remember({ ...base, valence }), TypeError, `valence=${String(valence)} 应被拒`);
+  }
+  for (const arousal of [-0.01, 1.01, Number.NaN, '0.5']) {
+    assert.throws(() => memory.remember({ ...base, arousal }), TypeError, `arousal=${String(arousal)} 应被拒`);
+  }
+  // 边界值是合法的
+  assert.equal(memory.remember({ ...base, valence: -1, arousal: 0 }).recorded, true);
+  assert.equal(memory.remember({ ...base, content: '另一个内容样本', valence: 1, arousal: 1 }).recorded, true);
+  memory.close();
+});
+
+test('③ 只存不算分：valence / arousal 绝不进四因子公式与 why', () => {
+  assert.deepEqual(Object.keys(FACTOR_WEIGHTS), ['relevance', 'freshness', 'importance', 'penalty'],
+    '四因子权重表里不许出现 valence / arousal');
+  assert.equal(SCORE_FORMULA.includes('valence'), false);
+  assert.equal(SCORE_FORMULA.includes('arousal'), false);
+
+  const { memory } = makeMemory('affect-not-scored');
+  // 两条除了情感坐标之外完全一样的记忆（force 避免被合并）
+  const negative = memory.remember({
+    content: '孪生样本甲', kind: 'fact', force: true, valence: -1, arousal: 1,
+  });
+  const positive = memory.remember({
+    content: '孪生样本甲', kind: 'fact', force: true, valence: 1, arousal: 0,
+  });
+  const items = memory.recall('', { minScore: 0 });
+  assert.equal(items.length, 2);
+  const byId = new Map(items.map((item) => [item.id, item]));
+  closeTo(byId.get(negative.id).score, byId.get(positive.id).score, 1e-12,
+    '情感坐标相反的两条记忆，得分必须完全一致——它们不参与打分');
+  for (const item of items) {
+    assert.equal('valence' in item.why, false, 'why 里不许出现 valence（否则等于进了公式）');
+    assert.equal('arousal' in item.why, false);
+    closeTo(
+      item.score,
+      0.40 * item.why.relevance + 0.25 * item.why.freshness + 0.25 * item.why.importance
+        - 0.10 * item.why.penalty,
+      1e-12,
+      '四因子手工复算仍成立',
+    );
+  }
   memory.close();
 });
 
@@ -706,7 +913,7 @@ test('事件流：每次操作一行，八字段为前缀，units=记忆条数',
   memory.remember({ content: '主人住在杭州市', kind: 'fact' });          // merged → 1
   memory.remember('嗯嗯');                                              // rejected → 0
   memory.recall('杭州');                                                // 命中 1 条 → 1
-  memory.forget(1);                                                     // forgotten → 1
+  memory.forget(1);                                                     // archived → 1
   memory.forget(12345);                                                 // missing → 0
   memory.export();                                                      // 0 条 → 0
 
@@ -726,7 +933,7 @@ test('事件流：每次操作一行，八字段为前缀，units=记忆条数',
   assert.equal(byOp('remember', 'merged').units, 1);
   assert.equal(byOp('remember', 'rejected').units, 0);
   assert.equal(byOp('recall', 'recalled').units, 1);
-  assert.equal(byOp('forget', 'forgotten').units, 1);
+  assert.equal(byOp('forget', 'archived').units, 1);
   assert.equal(byOp('forget', 'missing').units, 0);
   assert.equal(byOp('export', 'exported').units, 0);
   memory.close();
@@ -785,7 +992,7 @@ test('红线·src/memory 不 import 任何网络模块、不 fetch（守卫自�
  * 11. 便捷入口与纯函数
  * ------------------------------------------------------------------ */
 
-test('便捷入口：remember / recall / forget / exportMemories 一次性函数可用', () => {
+test('便捷入口：remember / recall / forget / purge / setImportance / quota / exportMemories 一次性函数可用', () => {
   const home = makeHome('wrappers');
   const options = { env: envFor(home) };
 
@@ -795,12 +1002,27 @@ test('便捷入口：remember / recall / forget / exportMemories 一次性函数
   const hits = recall('香菜', { ...options, minScore: 0 });
   assert.equal(hits.length, 1);
   assert.equal(hits[0].kind, 'preference');
+  assert.equal(recall('香菜', { ...options, minScore: 0, withMeta: true }).degradation.channel,
+    'keyword-only', '一次性入口也要把降级通道带出来');
 
   const text = exportMemories(options);
   assert.equal(text.trim().split('\n').length, 1);
 
+  // 配额：preference 默认 4 分；升到 5 分后占一个名额，purge 后释放
+  assert.equal(importanceQuota(options).used, 0);
+  const promoted = setImportance(result.id, 5, options);
+  assert.equal(promoted.updated, true);
+  assert.equal(importanceQuota(options).used, 1);
+
   const gone = forget(result.id, options);
   assert.equal(gone.forgotten, true);
+  assert.equal(gone.archived, true);
+  assert.equal(exportMemories(options), '');
+
+  const purged = purge(result.id, options);
+  assert.equal(purged.purged, true);
+  assert.equal(purged.deleted.id, result.id);
+  assert.equal(importanceQuota(options).used, 0);
   assert.equal(exportMemories(options), '');
 });
 
@@ -853,4 +1075,215 @@ test('纯函数：BM25 归一化到 0..1，无命中为 0', () => {
   closeTo(normalized.get(3), 0, 1e-9);
   assert.equal(normalizeRelevance(new Map()).size, 0, '没有命中就没有相关度');
   assert.equal(normalizeRelevance(new Map([[1, -3]])).get(1) ?? 0, 0, '非正原始分归一化后是 0');
+});
+
+/* ------------------------------------------------------------------ *
+ * 12. ② importance=5 配额（重要的东西必须稀缺）
+ * ------------------------------------------------------------------ */
+
+/** 填满 importance=5 的配额，返回写入的 id 列表。 */
+function fillTopQuota(memory, label = '顶格事项') {
+  const ids = [];
+  for (let i = 0; i < MAX_TOP_IMPORTANCE_ENTRIES; i += 1) {
+    const result = memory.remember({
+      content: `${label}${i}`,
+      kind: 'fact',
+      importance: 5,
+      force: true, // 内容近似，force 避免被闸二合并掉
+    });
+    assert.equal(result.recorded, true, `第 ${i + 1} 条 5 分记忆应当能写进去`);
+    ids.push(result.id);
+  }
+  return ids;
+}
+
+test('② importance=5 配额：写满 20 条后第 21 条被拒，带清单且不静默降级成 4 分', () => {
+  const { memory, home } = makeMemory('quota-full');
+  const ids = fillTopQuota(memory);
+
+  const quota = memory.importanceQuota();
+  assert.equal(quota.importance, 5);
+  assert.equal(quota.limit, MAX_TOP_IMPORTANCE_ENTRIES);
+  assert.equal(quota.used, MAX_TOP_IMPORTANCE_ENTRIES);
+  assert.equal(quota.remaining, 0);
+  assert.equal(quota.entries.length, MAX_TOP_IMPORTANCE_ENTRIES);
+  for (const entry of quota.entries) {
+    assert.equal(typeof entry.id, 'number');
+    assert.equal(typeof entry.content, 'string', '清单要带 id + content 摘要');
+    assert.ok(entry.content.length <= 41, '清单里的 content 是摘要，不是整条正文');
+  }
+
+  const rejected = memory.remember({
+    content: '再来一条顶格事项', kind: 'fact', importance: 5, force: true,
+  });
+  assert.equal(rejected.recorded, false);
+  assert.equal(rejected.action, 'rejected');
+  assert.equal(rejected.reason, 'importance-quota-full', '理由必须明确是配额满');
+  assert.equal(rejected.id, null);
+  assert.equal(rejected.quota.used, MAX_TOP_IMPORTANCE_ENTRIES);
+  assert.equal(rejected.quota.limit, MAX_TOP_IMPORTANCE_ENTRIES);
+  assert.deepEqual(rejected.quota.entries.map((entry) => entry.id), ids,
+    '被拒时要告诉调用方是谁占满了配额');
+  assert.equal(rejected.gates.quota.limited, true);
+  assert.equal(rejected.gates.importance.rejected, true);
+
+  // 不静默降级：库里绝对不能多出一条 importance=4 的「再来一条顶格事项」
+  const rows = memory.export().trim().split('\n').map((line) => JSON.parse(line));
+  assert.equal(rows.length, MAX_TOP_IMPORTANCE_ENTRIES, '被拒的候选不许偷偷落库');
+  assert.equal(rows.some((row) => row.content === '再来一条顶格事项'), false);
+  assert.equal(rows.every((row) => row.importance === 5), true, '也不许降成 4 分落库');
+
+  const last = lastEventOf(home, 'remember');
+  assert.equal(last.action, 'rejected');
+  assert.equal(last.reason, 'importance-quota-full');
+  assert.equal(last.units, 0);
+  memory.close();
+});
+
+test('② 配额只针对 5 分：4 分与 5 分可以随便写，合并进已有的 5 分不占新名额', () => {
+  const { memory } = makeMemory('quota-scope');
+  const ids = fillTopQuota(memory);
+
+  const four = memory.remember({ content: '一般重要性的事项', kind: 'fact', importance: 4 });
+  assert.equal(four.recorded, true, '配额满不许影响 4 分条目');
+  assert.equal(memory.importanceQuota().used, MAX_TOP_IMPORTANCE_ENTRIES);
+
+  // 合并到一条已经是 5 分的记忆：不新增名额，因此不受配额限制
+  const merged = memory.remember({ content: '顶格事项0呀', kind: 'fact', importance: 5, force: false });
+  assert.equal(merged.action, 'merged', '近似内容应当合并到已有的 5 分条目');
+  assert.equal(merged.recorded, true, '合并保持 5 分不占新名额，不该被配额挡住');
+  assert.equal(merged.id, ids[0]);
+  assert.equal(memory.importanceQuota().used, MAX_TOP_IMPORTANCE_ENTRIES);
+  memory.close();
+});
+
+test('② 腾位之后能再写：setImportance 降级 / purge 均释放名额，归档的也不占名额', () => {
+  const { memory } = makeMemory('quota-release');
+  const ids = fillTopQuota(memory);
+  const candidate = () => memory.remember({
+    content: '腾位后的顶格事项', kind: 'fact', importance: 5, force: true,
+  });
+
+  assert.equal(candidate().reason, 'importance-quota-full');
+
+  // ① 降级：5 → 3，腾出一个名额
+  const demoted = memory.setImportance(ids[0], 3);
+  assert.equal(demoted.updated, true);
+  assert.equal(demoted.importance, 3);
+  assert.equal(demoted.reason, null);
+  assert.equal(memory.importanceQuota().used, MAX_TOP_IMPORTANCE_ENTRIES - 1);
+  const afterDemote = candidate();
+  assert.equal(afterDemote.recorded, true, '降级之后必须能再写 5 分条目');
+  assert.equal(memory.importanceQuota().used, MAX_TOP_IMPORTANCE_ENTRIES);
+
+  // ② purge：真删也腾位
+  const purged = memory.purge(ids[1]);
+  assert.equal(purged.purged, true);
+  assert.equal(memory.importanceQuota().used, MAX_TOP_IMPORTANCE_ENTRIES - 1);
+  assert.equal(memory.remember({
+    content: '再次腾位后的顶格事项', kind: 'fact', importance: 5, force: true,
+  }).recorded, true);
+  assert.equal(memory.importanceQuota().used, MAX_TOP_IMPORTANCE_ENTRIES);
+
+  // ③ 归档不占名额：淡出的东西不该继续占着稀缺位
+  memory.forget(ids[2]);
+  assert.equal(memory.importanceQuota().used, MAX_TOP_IMPORTANCE_ENTRIES - 1);
+  assert.equal(memory.remember({
+    content: '归档腾位后的顶格事项', kind: 'fact', importance: 5, force: true,
+  }).recorded, true);
+
+  // 升回 5 也受同一道闸：名额满了就拒绝，不静默成功
+  assert.equal(memory.importanceQuota().used, MAX_TOP_IMPORTANCE_ENTRIES);
+  const promote = memory.setImportance(ids[0], 5);
+  assert.equal(promote.updated, false);
+  assert.equal(promote.reason, 'importance-quota-full');
+  assert.equal(promote.quota.used, MAX_TOP_IMPORTANCE_ENTRIES);
+
+  // 非法入参是编程错误
+  assert.throws(() => memory.setImportance(ids[4], 6), TypeError);
+  assert.throws(() => memory.setImportance(ids[4], 0), TypeError);
+  assert.throws(() => memory.setImportance(ids[4], '5'), TypeError);
+  assert.equal(memory.setImportance(99999, 3).reason, 'missing');
+  memory.close();
+});
+
+test('② 配额常量与实现同源：IMPORTANCE_QUOTA 与实测行为一致', () => {
+  assert.deepEqual({ ...IMPORTANCE_QUOTA }, { importance: 5, limit: MAX_TOP_IMPORTANCE_ENTRIES });
+  assert.equal(MAX_TOP_IMPORTANCE_ENTRIES, 20, '建议值 20：太多就不稀缺了');
+});
+
+/* ------------------------------------------------------------------ *
+ * 13. ④ 召回降级说细（这次到底缺了哪一段通道）
+ * ------------------------------------------------------------------ */
+
+test('④ 降级细分·FTS 正常：channel=keyword-only（语义通道未启用），事件流带同一通道', () => {
+  const { memory, home } = makeMemory('degrade-detail-fts');
+  memory.remember({ content: '主人住在杭州', kind: 'fact' });
+
+  const items = memory.recall('杭州', { minScore: 0 });
+  assert.ok(Array.isArray(items), '返回类型仍是数组（老调用方不受影响）');
+  assert.equal(items.degraded, true, 'v0.2.1 没有语义通道，不许声称「完整召回」');
+  assert.deepEqual(items.degradation.channel, 'keyword-only');
+  assert.match(items.degradation.reason, /关键词|语义/u, 'reason 要说清缺的是语义通道');
+  assert.deepEqual({ ...items.channels }, { keyword: 'fts', semantic: false });
+  assert.ok(DEGRADATION_CHANNELS.includes(items.degradation.channel));
+
+  // 元信息挂在数组上但不污染数组本身
+  assert.equal(Object.keys(items).includes('degradation'), false, '元信息必须是非枚举的');
+  assert.equal('degradation' in items, true, '但调用方要能读到');
+
+  const meta = memory.recall('杭州', { minScore: 0, withMeta: true });
+  assert.ok(Array.isArray(meta.items));
+  assert.equal(meta.degraded, true);
+  assert.deepEqual(meta.degradation.channel, 'keyword-only');
+  assert.deepEqual({ ...meta.channels }, { keyword: 'fts', semantic: false });
+
+  const event = lastEventOf(home, 'recall');
+  assert.equal(event.retrieval, 'fts');
+  assert.equal(event.degradationChannel, 'keyword-only', '事件流要能回答「那次是不是只有关键词」');
+  memory.close();
+});
+
+test('④ 降级细分·FTS 坏了：channel=fts-unavailable；易失后端：channel=scan-fallback', () => {
+  // FTS 索引坏掉（主表还在）
+  const broken = makeMemory('degrade-detail-fts-broken');
+  broken.memory.remember({ content: '主人讨厌香菜', kind: 'preference' });
+  dropFts(broken.home);
+  const scanned = broken.memory.recall('香菜', { minScore: 0 });
+  assert.equal(scanned[0].why.retrieval, 'scan');
+  assert.equal(scanned.degradation.channel, 'fts-unavailable');
+  assert.match(scanned.degradation.reason, /FTS/u);
+  assert.deepEqual({ ...scanned.channels }, { keyword: 'scan', semantic: false });
+  assert.equal(lastEventOf(broken.home, 'recall').degradationChannel, 'fts-unavailable');
+  broken.memory.close();
+
+  // sqlite 都打不开 → 易失后端（它没有 FTS，只能扫描）
+  const home = makeHome('degrade-detail-volatile');
+  fs.mkdirSync(path.join(home, 'memory.db'));
+  const volatile = createMemory({ env: envFor(home), warn: () => {} });
+  assert.equal(volatile.mode, 'memory-volatile');
+  volatile.remember({ content: '主人住在杭州', kind: 'fact' });
+  const items = volatile.recall('杭州', { minScore: 0 });
+  assert.equal(items.degradation.channel, 'scan-fallback');
+  assert.deepEqual({ ...items.channels }, { keyword: 'scan', semantic: false });
+  assert.equal(lastEventOf(home, 'recall').degradationChannel, 'scan-fallback');
+  volatile.close();
+});
+
+test('④ 只有完整召回才没有 degradation；空查询也不许假装完整', () => {
+  const { memory } = makeMemory('degrade-detail-empty');
+  memory.remember({ content: '主人住在杭州', kind: 'fact' });
+
+  const emptyQuery = memory.recall('', { minScore: 0 });
+  assert.equal(emptyQuery.length, 1, '空查询仍按新鲜度/重要性返回');
+  assert.equal(emptyQuery.degradation.channel, 'keyword-only');
+  assert.match(emptyQuery.degradation.reason, /空查询/u);
+  assert.deepEqual({ ...emptyQuery.channels }, { keyword: 'none', semantic: false });
+
+  // 三种通道都在枚举里；null（完整召回）只留给将来的「语义 + 关键词」双通道
+  for (const channel of DEGRADATION_CHANNELS) {
+    assert.equal(typeof channel, 'string');
+  }
+  assert.deepEqual([...DEGRADATION_CHANNELS], ['keyword-only', 'fts-unavailable', 'scan-fallback']);
+  memory.close();
 });

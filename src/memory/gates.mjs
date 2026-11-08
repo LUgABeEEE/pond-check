@@ -105,7 +105,8 @@ export function findSimilarRow(rows, content, kind) {
  * 归一化候选（编程错误直接抛 TypeError，不伪装成「能力不可用」）。
  * @param {object|string} raw
  * @returns {{content: string, kind: string|null, entities: string[], importance: number|null,
- *            confidence: number, source: string|null, sourceRef: string|null,
+ *            confidence: number, valence: number|null, arousal: number|null,
+ *            source: string|null, sourceRef: string|null,
  *            ttlDays: number|null, force: boolean}}
  */
 export function normalizeCandidate(raw) {
@@ -156,12 +157,34 @@ export function normalizeCandidate(raw) {
     ttlDays = value;
   }
 
+  // 情感坐标（Russell 二维）：**只存不算分**。校验收在写入口，
+  // 越界是编程错误（TypeError），不伪装成「能力不可用」。
+  let valence = null;
+  if (candidate.valence !== undefined && candidate.valence !== null) {
+    const value = candidate.valence;
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < -1 || value > 1) {
+      throw new TypeError(`remember 候选的 valence 必须是 -1..1 的数，收到 ${JSON.stringify(value)}`);
+    }
+    valence = value;
+  }
+
+  let arousal = null;
+  if (candidate.arousal !== undefined && candidate.arousal !== null) {
+    const value = candidate.arousal;
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 1) {
+      throw new TypeError(`remember 候选的 arousal 必须是 0..1 的数，收到 ${JSON.stringify(value)}`);
+    }
+    arousal = value;
+  }
+
   return {
     content,
     kind,
     entities,
     importance,
     confidence,
+    valence,
+    arousal,
     source: typeof candidate.source === 'string' && candidate.source !== '' ? candidate.source : null,
     sourceRef: typeof candidate.sourceRef === 'string' && candidate.sourceRef !== '' ? candidate.sourceRef : null,
     ttlDays,
