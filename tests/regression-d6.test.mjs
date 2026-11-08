@@ -37,6 +37,14 @@ const TEMP_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'pond-check-d6-'));
 const NOW = Date.now();
 const RULES = JSON.parse(fs.readFileSync(new URL('../src/rules.json', import.meta.url), 'utf8'));
 const MINUTE = 60 * 1000;
+
+// 同上一条：deps 一格取决于宿主机有没有 ffmpeg（见文件头「deps 一栏……不在断言
+// 范围内」）。给本进程的 PATH 加一个只含 ffmpeg 桩的前缀，让「六格都判不出」这类
+// 断言在任何机器上都成立 —— 包括没装 ffmpeg 的 CI runner。
+const PATH_SHIM = path.join(TEMP_ROOT, 'bin');
+fs.mkdirSync(PATH_SHIM, { recursive: true });
+fs.writeFileSync(path.join(PATH_SHIM, 'ffmpeg'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+process.env.PATH = [PATH_SHIM, process.env.PATH].filter(Boolean).join(path.delimiter);
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 

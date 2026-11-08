@@ -33,6 +33,14 @@ const FAKE_DSH_HOME = path.join(TEMP_ROOT, 'dsh-home');
 fs.mkdirSync(FAKE_HOME, { recursive: true });
 fs.mkdirSync(FAKE_DSH_HOME, { recursive: true });
 
+// deps 那一格是**宿主机事实**：PATH 上没有 ffmpeg 的机器（CI runner 就是）会判成
+// warn，而档位规则里 warn 优先于 unknown —— 整格翻档，下面「六格都判不出」的断言
+// 跟着挂。这里给子进程一个只放 ffmpeg 桩的 PATH 前缀，把「这台机器装没装 ffmpeg」
+// 从被测变量里摘掉，断言才和宿主机软件清单无关。
+const PATH_SHIM = path.join(TEMP_ROOT, 'bin');
+fs.mkdirSync(PATH_SHIM, { recursive: true });
+fs.writeFileSync(path.join(PATH_SHIM, 'ffmpeg'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+
 after(() => {
   fs.rmSync(TEMP_ROOT, { recursive: true, force: true });
 });
@@ -51,6 +59,7 @@ function runCli(args, { json = true } = {}) {
       HOME: FAKE_HOME,
       DSH_HOME: FAKE_DSH_HOME,
       XDG_CONFIG_HOME: path.join(FAKE_HOME, '.config'),
+      PATH: [PATH_SHIM, process.env.PATH].filter(Boolean).join(path.delimiter),
     },
     encoding: 'utf8',
     timeout: 30_000,
