@@ -165,7 +165,9 @@ CREATE TABLE memories (
   last_recalled INTEGER,                -- 上次被召回的时间
   recall_count  INTEGER NOT NULL DEFAULT 0,
   ttl_days      INTEGER,                -- 覆盖默认半衰期
-  archived      INTEGER NOT NULL DEFAULT 0
+  archived      INTEGER NOT NULL DEFAULT 0,
+  valence       REAL,                   -- 效价 -1..1，NULL = 未标注（预留，不参与打分）
+  arousal       REAL                    -- 唤醒度 0..1，NULL = 未标注（预留，不参与打分）
 );
 
 CREATE VIRTUAL TABLE memories_fts USING fts5(
@@ -175,12 +177,28 @@ CREATE VIRTUAL TABLE memories_fts USING fts5(
 
 索引：`(kind)`、`(importance)`、`(last_recalled)`、`(archived)`。
 
-> 实际实现与上表逐字一致（含 4 个索引与 3 个 FTS5 外部内容触发器）。库文件：
-> `<POND_HOME>/memory.db`（默认 `~/.pond/memory.db`）。
+**`valence` / `arousal`（v0.2.1，schema v2）**：Russell 情感坐标（借鉴 Ombre Brain，见 §10.3）——
+`valence` 效价 −1（极负面）.. 1（极正面）、`arousal` 唤醒度 0（平静）.. 1（激动），
+**预留字段，当前不参与打分**。它们**绝不进 §3.4 的四因子公式**：`scoring.mjs` 的
+`FACTOR_WEIGHTS` 里没有它们、`why` 里也不出现，召回排序与它们无关。现在只存，
+是为了将来有真实数据后再决定怎么用——不在没有数据的时候拍一个情感权重。
+`remember()` 接受并校验这两个字段（越界即 `TypeError`：`valence` 限 −1..1、`arousal` 限 0..1）；
+合并旧记忆时新值优先、没给就保留旧值（合并不是抹掉已知情绪）；`recall()` / `export()`
+把它们原样带出，未标注保持 `NULL`（不拿 0 冒充「中性」）。
+
+**迁移（v0.2.0 的旧库平滑升级）**：打开旧库时逐列检查（判据是 `pragma_table_info`
+里列是否存在，**不是 `user_version`**——外部 sqlite3 工具可能动过版本号，列才是事实），
+缺哪列就 `ALTER TABLE memories ADD COLUMN` 补哪列，旧行两列保持 `NULL`，
+一条记忆都不重写、不丢失。补完写 `user_version = 2`，事件流记一条 `op=migrate`
+（带上补了哪几列），重开不重复迁移。
+
+> 实际实现与上表逐字一致（含 `valence` / `arousal` 两列、4 个索引与 3 个 FTS5 外部内容触发器）。
+> 库文件：`<POND_HOME>/memory.db`（默认 `~/.pond/memory.db`）；迁移由
+> `src/memory/store.mjs` 的 `migrateSchema()` 执行，新建库直接是 v2。
 
 ### 3.3 沉淀（write path）
 
-三闸，缺一不可：
+三闸，缺一不可（v0.2.1 另有一道**配额闸**，见本节末尾）：
 
 **闸一 · 候选抽取**
 从对话里抽候选，只接受四类之一。抽不出类别就不记。
@@ -203,6 +221,23 @@ CREATE VIRTUAL TABLE memories_fts USING fts5(
 **写入必须过闸**：`memory.remember()` 不接受「直接落库」，只接受候选 + 三闸结果。
 用户可以用 `force: true` 选项跳过闸二，但跳过会被记进事件日志。
 
+**闸四 · importance=5 的稀缺配额（v0.2.1）**
+
+importance=5 是稀缺资源：**现役（未归档）的 5 分条目硬上限 20 条**
+（`MAX_TOP_IMPORTANCE_ENTRIES = 20`）。理由很直接——一旦所有事都是 5 分，
+§3.4 四因子里的「重要性」这一项就等于常数，排序退化，用户再也没法靠重要性
+找回真正要紧的事。上限不是省资源，是**保住这个字段的区分度**（借鉴 Ombre Brain，见 §10.2）。
+
+- **只有「新增一个 5 分位」才占名额**：合并进一条已经是 5 分的旧记忆不占；
+- 写满时 `remember()` 返回 `recorded: false` + `reason: 'importance-quota-full'`
+  + `quota` 快照（`{ importance, limit, used, remaining, entries: [{ id, kind, content }] }`，
+  `content` 是 ≤40 字摘要），**绝不静默把 5 降成 4 落库**——静默降级等于骗调用方说「记住了」；
+- 腾位两条路：`setImportance(id, n)` 把某条降级（升回 5 同样受配额约束，不许绕闸），
+  或 `purge(id)` 真删（见 §3.7）；
+- 已归档（`archived = 1`）的条目**不占名额**——淡出的东西不该继续占着稀缺位；
+- 配额只管 5 分这一档，**不限制记忆总条数**（1–4 分想记多少记多少）。
+  随时可查快照：`importanceQuota()`。
+
 ### 3.4 召回（read path）
 
 四因子加权融合，**不是单一排序**：
@@ -223,12 +258,55 @@ score = 0.40 × 相关度
 接口：
 
 ```js
-memory.recall(query, { limit = 6, kinds, minScore = 0.15 })
-  → [{ id, kind, content, score, why }]
+memory.recall(query, { limit = 6, kinds, minScore = 0.15, includeArchived, withMeta })
+  → [{ id, kind, content, score, why, entities, importance, valence, arousal, ... }]
 ```
 
 `why` 是个对象，说明这次为什么被选中（相关度/新鲜度/重要性的分项），用于调试和解释。
 **不能让召回变成一个黑盒**——否则用户永远不知道为什么她突然提起三个月前的事。
+`includeArchived: true` 连归档的一起召回（日常召回默认隐藏归档，见 §3.7）。
+
+**降级要说细（v0.2.1）**：召回结果必须同时回答两个**不同**的问题，而且**不许混成一个字段**：
+
+- `channels` —— **能力声明**（事实）：这次我用了哪个通道；
+- `degradation` —— **降级判断**：这次是不是比预期差（本来能更好，但有东西坏了）。
+
+返回的数组上挂着三个**非枚举只读属性**（不影响数组本身的比较 / 序列化 / `.length` / `.map`，
+老调用方照旧）：
+
+```js
+items.channels      // { keyword: 'fts' | 'scan' | 'none', semantic: false }  ← 能力声明
+items.degradation   // { channel, reason } | null                            ← 降级判断
+items.degraded      // 便捷别名：degradation !== null
+```
+
+**`channels`（能力声明）**：`keyword` 是 `'fts' | 'scan' | 'none'`（`none` = 空查询，
+只按新鲜度 / 重要性 / 重复惩罚排序，是设计内的正常路径）；`semantic` 恒为 `false`——
+v0.2.1 只实现了 FTS 关键词通道，**这就是它的完整能力**，`channels.semantic === false`
+如实声明了这一点，不假装有向量召回。
+
+**`degradation`（降级判断）**：`null` = 正常路径（没有东西坏）；对象 = 真降级。当前只有两种真降级：
+
+| channel | 什么时候 | reason 说清什么 |
+|---|---|---|
+| `fts-unavailable` | FTS 索引坏了 / 被删了，退回全表扫描 | 「这次只是关键词命中」——退化为扫描，相关度按命中词占比封顶 0.5 |
+| `scan-fallback` | 存储降级为易失后端（sqlite 打不开） | 「这次只是关键词命中」——无 FTS 索引，只能全表扫描 |
+
+`DEGRADATION_CHANNELS` 枚举里还有第三个值 `keyword-only`，但**当前版本不会返回它**：
+它留给将来接入向量通道之后用（表示「配了语义通道但没用上」）。现在 **FTS 正常命中和
+空查询都返回 `degradation: null`**——v0.2.1 没有向量通道，关键词就是它的全部能力，
+不是它退而求其次的结果，所以不算降级。
+
+为什么要把「用哪个通道」和「是不是降级」分成两个字段：一个信号如果失去区分度，
+就不该存在。假如把「没上向量」也算降级，每一次召回都会 `degraded: true`，
+两轮之后没人再看这个字段——**永远报警等于没报警**（见 §10.4）。
+「降级」必须意味着「本来能更好但有东西坏了」。
+
+想显式拿元信息用 `{ withMeta: true }`，返回 `{ items, degraded, degradation, channels }`。
+渲染层在 `degradation` 非 `null` 时**必须向用户明说**「这次只是关键词命中」加上是哪一环坏了，
+不把降级结果当完整召回展示。事件流里 `retrieval` 回答「那次用了哪个通道」
+（`'fts' / 'scan' / 'none'`），`degradationChannel` 正常路径是 `null`、只有真降级才有值，
+事后能回答「那次召回有没有退化」。
 
 ### 3.5 随机唤醒（wake）
 
@@ -256,6 +334,19 @@ silence  = min(1, daysSinceRecalled / 7)          // 从未提过 = 1（沉默�
 
 `importance²` 让重要的事权重压倒性地高；`silence` 让「很久没提」的事浮上来。
 
+**这个公式背后的原则（v0.2.1 补记，别让它只是个碰巧写对的公式）**：
+
+> 唤醒要浮出的是「**还没被消化的**」，不是「最重要的」。提过的事被 `recall_count` 压下去，
+> 没提过的浮上来。这个直觉与 Ombre Brain 的「未解决优先」独立收敛到同一个点。
+
+展开说：重要但说过的，已经在对话里被处理过了；不重要但一直没提的，才是那个
+「她应该想起来问问」的东西。`silence`（距上次提起的天数）就是我们的「未解决」，
+`recall_count` 进重复惩罚（§3.4）就是「提过 = 被消化了一点」的记账。
+所以 `silence` 满 7 天到顶不是随手拍的数，`importance²` 也不是唯一主角——
+这个公式的题目叫「浮出没消化的」，不叫「复读最重要的」。
+（对应 OB 的 breath 权重池浮现：「未解决的、情绪强烈的记忆权重更高，对话开头自动浮现」；
+两边没有任何交流，各自收敛到同一条原则——出处与取舍见 §10。）
+
 频率控制：
 - 每日上限：默认 3 次
 - 两次唤醒最少间隔：默认 4 小时
@@ -279,6 +370,39 @@ wake.schedule({ from, until }) → [{ at, memory }]   // 预排当天唤醒点
   因为 `export` 是保留字）
 - 实际状态目录：`<POND_HOME>/memory.db`、`<POND_HOME>/events.jsonl`、`<POND_HOME>/image.json`、
   `<POND_HOME>/out/`；整目录删掉 = 能力层回到初始状态，诊断层结果不变
+
+### 3.7 遗忘与抹除（forget / purge）
+
+「忘掉」和「删掉」是两件事，API 必须分开（v0.2.1，借鉴 Ombre Brain 的「遗忘是淡去」，
+见 §10.1）：
+
+| | `forget(id)` | `purge(id, { actor? })` |
+|---|---|---|
+| 语义 | 归档（淡出，可撤回） | 物理删除（**不可逆**） |
+| 效果 | 只置 `archived = 1`，不改 `updated_at`（归档是可见性，不是更新） | 行真从库里删掉 |
+| 日常 `recall()` | 看不到 | —— |
+| `recall(q, { includeArchived: true })` | 还找得回 | 找不回 |
+| `export()` | 默认不导出；`{ includeArchived: true }` 追加归档块、`{ split: true }` 分两段给 | —— |
+| wake 唤醒 | 不会再被挑中 | —— |
+| 事件流 | `op: 'forget'`，`reason: 'archived-not-deleted'` | `op: 'purge'` + **不可忽略的审计记录** |
+
+`forget` 幂等：对已归档的 id 再来一次返回 `action: 'already-archived'`（不报错），
+找不到返回 `action: 'missing'`；返回值 `{ forgotten, archived, id, memory, action }`。
+
+`purge` 是**唯一会丢数据的 API**，所以它必须在事件流里留下不可忽略的审计记录，
+事后翻日志绝不会把它误当成一次普通归档：
+
+- `actor`：谁做的（实例选项 `actor`，缺省 `'local'`；`purge(id, { actor })` 可按次覆盖）
+- `ts`：何时（事件时间戳）
+- `deleted`：删了什么的摘要——`id / kind / contentPreview（≤40 字）/ contentLength /
+  contentDigest（sha256 前 16 位）/ importance / confidence / createdAt / updatedAt /
+  recallCount / archived`（够核对，又不把整条正文抄进日志）
+- `irreversible: true`：这一步删掉的东西回不来
+
+返回值 `{ purged, id, deleted, audit }` 里的 `audit` 就是事件流里那一条，调用方可以直接展示。
+两条纪律：只有**真的删掉了**才写 `deleted` 摘要（删失败却留一条「删了什么」，审计就撒谎了）；
+对 §3.3 闸四的配额，归档的条目不占名额（所以 `forget` 会顺带腾出名额），
+显式腾位的两条路是 `setImportance(id, n)` 降级与 `purge(id)` 真删。
 
 ---
 
@@ -490,14 +614,23 @@ check  ✗──>     src/memory, src/tts, src/image  （禁止 import）
 
 ```js
 // pond-check/memory
-createMemory({ env?, dbPath?, now?, warn?, eventsPath? }) -> {
-  remember(candidate, { force? }) -> { recorded, action, reason, id, memory, similarity, gates, gatesSkipped }
-  recall(query, { limit = 6, kinds?, minScore = 0.15 }) -> [{ id, kind, content, score, why, entities, importance, ... }]
-  forget(id) -> { forgotten, id }
-  export() -> string            // JSONL，用户自己决定往哪放
+createMemory({ env?, dbPath?, now?, warn?, eventsPath?, actor? }) -> {
+  remember(candidate, { force? })
+    -> { recorded, action, reason, id, memory, similarity, gates, gatesSkipped, quota }
+  recall(query, { limit = 6, kinds?, minScore = 0.15, includeArchived?, withMeta? })
+    -> [{ id, kind, content, score, why, entities, importance, valence, arousal, archived, ... }]
+       数组上挂非枚举 degraded / degradation / channels（能力声明与降级判断分开，见 §3.4）；
+       withMeta: true 则返回 { items, degraded, degradation, channels }
+  forget(id) -> { forgotten, archived, id, memory, action }   // 归档（淡出），不是删除
+  purge(id, { actor? }) -> { purged, id, deleted, audit }     // 真删，事件流留不可逆审计
+  setImportance(id, n) -> { updated, id, importance, reason, memory, quota }
+  importanceQuota() -> { importance, limit, used, remaining, entries }
+  export({ includeArchived?, split? }) -> string | { active, archived, counts }   // JSONL
   close()
 }
-remember(candidate, options?) / recall(query, options?) / forget(id, options?) / exportMemories(options?)
+remember(candidate, options?) / recall(query, options?) / forget(id, options?) /
+  purge(id, options?) / setImportance(id, n, options?) / importanceQuota(options?) /
+  exportMemories(options?)
 
 // pond-check/wake
 createWake({ env?, dbPath?, store?, now?, random?, limits?, warn?, eventsPath? }) -> {
@@ -579,3 +712,76 @@ resolveCredentials(spec, env?) / MissingKeyError
 
 本地路径（`edge` / `command` / `comfyui`）不受这一条影响：`edge` 的令牌算法已用
 `edge-tts 7.3.1` 的 Python 原实现做过离线对照，`command` / `comfyui` 的行为由本地进程/服务决定。
+
+---
+
+## 10. 设计取舍：借鉴 Ombre Brain 的三条
+
+v0.2.1 记忆层的改动（§3.2 情感两列、§3.3 闸四、§3.4 降级细分、§3.7 遗忘与抹除）借用了
+**Ombre Brain**（P0luz/Ombre-Brain，一个长期情绪记忆库：Russell 坐标、Obsidian 存储、
+遗忘曲线、权重池浮现、稀缺上限）的三条设计。**只抄机制，不抄立场**：
+
+> OB 的 README 写明「它的**使用者是模型自己**，不是它背后的人」，它所有的反直觉设计
+> 都从这一条推出来；而 pond-check 的使用者是**养鱼的人**，记忆做出来是为了
+> 「让人看清她记得什么、为什么提这件事」。同一套机制，两个方向的用处——
+> 抄错立场，pond-check 会从「体检工具」变成「另一个养鱼框架」，那就失去了它唯一的价值。
+
+### 10.1 遗忘是淡去，不是删除（→ §3.7 的 forget / purge 二分）
+
+- **OB 的设计意图**：OB 的「删除」只把记忆移进 `archive/` 并从日常召回隐藏，
+  **物理抹除要绕过程序去文件系统手动删**——它的 MCP 工具、REST API、Dashboard
+  都不提供物理删除。一个记忆系统里最不可逆的操作，应该是最难做的操作。
+- **为什么抄**：用户一句「忘了吧」和「这条不重要了」是两件事。`forget` 旧实现是真删，
+  分不开它们，一句气话就永久丢数据。
+- **我们的形态**：`forget(id)` = 归档（可撤回，`recall(..., { includeArchived: true })`
+  找得回），`purge(id)` = 物理删除。比 OB 多给一个显式 `purge`，因为我们是 CLI 不是服务，
+  没有「绕过程序删文件」这个仪式可依赖——那就把「难做」体现在**不可逆审计**上。
+
+### 10.2 重要必须稀缺（→ §3.3 闸四的 importance=5 配额）
+
+- **OB 的设计意图**：OB 给「核心准则（pinned）」硬上限 20、「坐标系（anchor）」硬上限 24，
+  理由写得很直接：「**重要的东西必须稀缺，否则『重要』就失去意义**」；而 `importance`
+  只是普通评分字段，不设配额。
+- **为什么抄**：我们的 `importance` 1–5 原本可以无限多人打 5 分。一旦所有事都是 5 分，
+  §3.4 四因子里的「重要性」这一项就等于常数，排序退化，用户再也没法靠重要性找回
+  真正要紧的事。上限不是省资源，是**保住字段的区分度**。
+- **我们的形态**：只给 5 分这一档设硬上限 20（照抄 OB pinned 的数），1–4 分不设限；
+  写满显式拒绝并附现役清单（`importance-quota-full` + `quota`），**绝不静默降成 4 分**。
+
+### 10.3 元数据不喂算分（→ §3.2 的 valence / arousal「预留，不参与打分」）
+
+- **OB 的设计意图**：OB 明确写「`why_remembered`、`digested` 这类字段只描述
+  『为什么 / 怎么对待』，**绝不参与衰减打分**——不把记忆变成一个可被优化的目标函数」。
+- **为什么抄**：任何进入打分的字段都会**反过来被优化**。把 `source`（记忆从哪来）
+  之类也扔进公式，等于在教上游「你只要记更多来源好的东西」，它会真的这么干。
+  要留一条「只用来解释、不用来算分」的字段线。
+- **我们的形态**：情感坐标（`valence` / `arousal`，Russell 环形模型）**先只存不算分**——
+  在没有任何真实记忆数据的情况下拍一个情感权重，等于用想象力调参，最后一定调歪。
+  `scoring.mjs` 的 `FACTOR_WEIGHTS` 仍是四因子，`why` 里不出现它们；
+  等攒够真实数据再决定要不要进排序。现在的 `recall_count` 参与打分（重复惩罚）
+  不在此列——它本来就是排序语义的一部分，不是「描述性元数据」。
+
+### 10.4 我们自己的一条裁定：永远报警等于没报警（与 10.3 同一类思路）
+
+- **出处**：这不是 OB 的设计，是 v0.2.1 实现 `degradation` 时我们自己踩出来的一条
+  （先做错了，被评审打回）：最初 FTS 正常命中也返回 `degradation: { channel: 'keyword-only' }`，
+  于是**每一次召回都 `degraded: true`**。
+- **为什么错**：一个信号如果失去区分度，就不该存在。永远在报警的灯，
+  两轮之后没人再看——它想说的「有东西坏了」被自己的噪声淹掉了。
+- **裁定**：「降级」必须意味着「本来能更好但有东西坏了」。v0.2.1 没有向量通道，
+  关键词就是它的完整能力，不是退而求其次——所以 FTS 正常命中与空查询都返回
+  `degradation: null`，只有 `fts-unavailable` / `scan-fallback` 两种真故障才报警。
+  「我用了哪个通道」由 `channels` 如实回答（能力声明），两者分开（§3.4）。
+  这和 10.3 是同一类思路：**字段的语义边界要守住，别让一个字段又当事实又当判断。**
+
+### 10.5 顺带记下的一个收敛
+
+唤醒公式（§3.5）的 `silence` 因子与 OB breath 权重池的「未解决优先」
+（「未解决的、情绪强烈的记忆权重更高，对话开头自动浮现」）是**同一个原则的两种实现**：
+唤醒要浮出的是「还没被消化的」，不是「最重要的」。两边没有任何交流，各自收敛到同一点
+——所以那条原则值得写进我们自己的 SPEC（§3.5），别让它只是个碰巧写对的公式。
+
+> 事实来源：Ombre-Brain 的 README 与设计文档（`archive/` 归档语义、pinned/anchor 硬上限、
+> 元数据不参与衰减打分的原文约定、breath 的设计目标）。**「哪条抄、哪条不抄」的判断是
+> 我们自己的**——它们没有为 pond-check 这类诊断工具做过设计，适配性判断不冒充它们的意图。
+> 完整取舍分析见工作区《借鉴分析：心潮·念 × Ombre Brain → pond-check 能力层》。

@@ -167,6 +167,11 @@ chmod +x ~/.local/bin/pond-check
 `memory.db`（本地记忆库）、`image.json`（可选：工作流 / 端点 / 链序）、`out/`（出图默认落点）。
 **记忆默认本地、永不上传**：没有同步、没有云备份、没有遥测；要带走就用 `memory.export()` 导出 JSONL。
 
+> **「忘了」到底删没删？** `forget(id)` 是**归档，不是删除**——记忆只是淡出
+> （日常召回不再出现、不再被唤醒），数据还在 `memory.db` 里，`recall(..., { includeArchived: true })`
+> 还找得回；真删只有显式 `purge(id)`，且它会在事件流里留下一条**不可逆的审计记录**
+> （谁、何时、删了什么摘要），事后可查。详见 `docs/CAPABILITIES-SPEC.md` §3.7。
+
 > ⚠️ **云 adapter 未对真实服务验证。** `doubao` / `seedream` / `mimo` 是按公开文档离线对齐的协议实现，
 > 零联网铁律下**没有对真实服务跑过**；endpoint、字段名、错误码都可能对不上。首次使用请先冒烟
 > 一条最小请求（一句短语音 / 一张最小图），确认能通再批量用。本地路径（`edge` / `command` / `comfyui`）
