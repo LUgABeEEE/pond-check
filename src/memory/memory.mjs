@@ -137,7 +137,10 @@ export function createMemory(options = {}) {
 
   const opened = openStore({ env, dbPath: options.dbPath });
   const store = opened.store;
-  // 记忆是纯本地能力：事件里的 provider 恒标 local，成本口径恒 0（SPEC §2.2）
+  // 记忆是纯本地能力：`local: true` 说的是**成本口径**（本地能力，永远不计费），
+  // 不是 provider 的名字。provider id 仍如实取 store.provider（`sqlite` 或降级后的
+  // `memory-volatile`）—— 两条信息分开，别让「本地」被读成「provider 恒为 local」。
+  // （reviewer 在 v0.2.1 验收时指出旧注释与实现不符，这是 v0.2.0 遗留的表述错误。）
   const providerInfo = { id: store.provider, local: true };
 
   // 降级发生时把两个 provider 的尝试都记进事件流：失败的 sqlite + 接手的 volatile。
