@@ -564,15 +564,20 @@ export function createMemory(options = {}) {
       };
     }
     if (input.mode === 'none') {
-      return {
-        channel: 'keyword-only',
-        reason: '本次查询没有关键词（空查询），只按新鲜度 / 重要性 / 重复惩罚排序；语义通道未启用',
-      };
+      // 空查询：只按新鲜度 / 重要性 / 重复惩罚排序。这是设计内的正常路径，不是降级。
+      return null;
     }
-    return {
-      channel: 'keyword-only',
-      reason: '本次是 FTS 关键词命中，语义通道未启用（v0.2.1 没有向量召回）',
-    };
+
+    // FTS 正常工作 = 当前能力的**完整召回**，不是降级。
+    //
+    // 队长裁定（v0.2.1）：之前这里返回 keyword-only 的 degradation，导致
+    // 每一次召回都 degraded=true。那样这个信号两轮之后就没人看了——永远报警
+    // 等于没报警。「降级」必须意味着「本来能更好但有东西坏了」，而 v0.2.1
+    // 压根没有向量通道，keyword 就是它的全部能力，不是它退而求其次的结果。
+    //
+    // 「我用了哪个通道」这件事由 channels 字段回答（能力声明），
+    // 「这次是不是比预期差」由 degradation 回答（降级判断）。两者分开。
+    return null;
   }
 
   /**

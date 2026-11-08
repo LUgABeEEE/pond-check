@@ -1002,8 +1002,8 @@ test('便捷入口：remember / recall / forget / purge / setImportance / quota 
   const hits = recall('香菜', { ...options, minScore: 0 });
   assert.equal(hits.length, 1);
   assert.equal(hits[0].kind, 'preference');
-  assert.equal(recall('香菜', { ...options, minScore: 0, withMeta: true }).degradation.channel,
-    'keyword-only', '一次性入口也要把降级通道带出来');
+  assert.equal(recall('香菜', { ...options, minScore: 0, withMeta: true }).degraded,
+    false, '一次性入口也要如实说「这次没降级」');
 
   const text = exportMemories(options);
   assert.equal(text.trim().split('\n').length, 1);
@@ -1216,17 +1216,20 @@ test('② 配额常量与实现同源：IMPORTANCE_QUOTA 与实测行为一致',
  * 13. ④ 召回降级说细（这次到底缺了哪一段通道）
  * ------------------------------------------------------------------ */
 
-test('④ 降级细分·FTS 正常：channel=keyword-only（语义通道未启用），事件流带同一通道', () => {
+test('④ 降级细分·FTS 正常 = 当前能力的完整召回（不报降级，但 channels 如实声明）', () => {
   const { memory, home } = makeMemory('degrade-detail-fts');
   memory.remember({ content: '主人住在杭州', kind: 'fact' });
 
   const items = memory.recall('杭州', { minScore: 0 });
   assert.ok(Array.isArray(items), '返回类型仍是数组（老调用方不受影响）');
-  assert.equal(items.degraded, true, 'v0.2.1 没有语义通道，不许声称「完整召回」');
-  assert.deepEqual(items.degradation.channel, 'keyword-only');
-  assert.match(items.degradation.reason, /关键词|语义/u, 'reason 要说清缺的是语义通道');
+
+  // 队长裁定：v0.2.1 压根没有向量通道，keyword 就是它的全部能力，
+  // 不是「退而求其次」。降级必须意味着「本来能更好但有东西坏了」。
+  assert.equal(items.degraded, false, 'FTS 正常工作时不许报降级');
+  assert.equal(items.degradation, null, '完整召回时 degradation 必须是 null');
+
+  // 但「我用了哪个通道」要如实说 —— 这是能力声明，不是降级判断
   assert.deepEqual({ ...items.channels }, { keyword: 'fts', semantic: false });
-  assert.ok(DEGRADATION_CHANNELS.includes(items.degradation.channel));
 
   // 元信息挂在数组上但不污染数组本身
   assert.equal(Object.keys(items).includes('degradation'), false, '元信息必须是非枚举的');
@@ -1234,13 +1237,15 @@ test('④ 降级细分·FTS 正常：channel=keyword-only（语义通道未启�
 
   const meta = memory.recall('杭州', { minScore: 0, withMeta: true });
   assert.ok(Array.isArray(meta.items));
-  assert.equal(meta.degraded, true);
-  assert.deepEqual(meta.degradation.channel, 'keyword-only');
+  assert.equal(meta.degraded, false);
+  assert.equal(meta.degradation, null);
   assert.deepEqual({ ...meta.channels }, { keyword: 'fts', semantic: false });
 
   const event = lastEventOf(home, 'recall');
   assert.equal(event.retrieval, 'fts');
-  assert.equal(event.degradationChannel, 'keyword-only', '事件流要能回答「那次是不是只有关键词」');
+  // 事件流的 degradationChannel 只在真降级时有值；正常路径是 null
+  // 「那次用了哪个通道」由 retrieval 字段回答
+  assert.equal(event.degradationChannel, null, 'FTS 正常时不该记降级通道');
   memory.close();
 });
 
@@ -1270,14 +1275,15 @@ test('④ 降级细分·FTS 坏了：channel=fts-unavailable；易失后端：ch
   volatile.close();
 });
 
-test('④ 只有完整召回才没有 degradation；空查询也不许假装完整', () => {
+test('④ 空查询也是正常路径（degradation=null），只有真坏了才算降级', () => {
   const { memory } = makeMemory('degrade-detail-empty');
   memory.remember({ content: '主人住在杭州', kind: 'fact' });
 
   const emptyQuery = memory.recall('', { minScore: 0 });
   assert.equal(emptyQuery.length, 1, '空查询仍按新鲜度/重要性返回');
-  assert.equal(emptyQuery.degradation.channel, 'keyword-only');
-  assert.match(emptyQuery.degradation.reason, /空查询/u);
+  // 空查询是设计内的正常路径：按时间/重要性排序，不涉及检索通道
+  assert.equal(emptyQuery.degraded, false);
+  assert.equal(emptyQuery.degradation, null);
   assert.deepEqual({ ...emptyQuery.channels }, { keyword: 'none', semantic: false });
 
   // 三种通道都在枚举里；null（完整召回）只留给将来的「语义 + 关键词」双通道
